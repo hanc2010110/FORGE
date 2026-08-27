@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "createdAt": "2026-08-27T12:28:53.182Z",
+  "updatedAt": "2026-08-27T12:28:57.229Z",
+  "briefPath": ".omx/ultragoal/brief.md",
+  "goalsPath": ".omx/ultragoal/goals.json",
+  "ledgerPath": ".omx/ultragoal/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-baseline-and-contracts",
+      "title": "Baseline and contracts",
+      "objective": "Lock the existing deterministic behavior, add only required dependencies, initialize safe local project metadata, and define versioned domain contracts for specifications, approvals, prepared analyses, and lifecycle events.",
+      "status": "in_progress",
+      "attempt": 1,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:57.229Z",
+      "startedAt": "2026-08-27T12:28:57.229Z"
+    },
+    {
+      "id": "G002-two-stage-analysis-engine",
+      "title": "Two-stage analysis engine",
+      "objective": "Split analysis into durable prepare and execute_prepared stages while preserving the existing execute wrapper; bind preflight to spec, revision, policy, engine, plugin, expected metrics, and approvals; reject stale or tampered preparation before plugin execution.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    },
+    {
+      "id": "G003-sqlite-evidence-store",
+      "title": "SQLite evidence store",
+      "objective": "Implement migration-managed SQLite persistence for projects, specs, revisions, approvals, prepared analyses, append-only run events, results, idempotency, optimistic concurrency, startup recovery, and byte-stable evidence export.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    },
+    {
+      "id": "G004-application-workflow-service",
+      "title": "Application workflow service",
+      "objective": "Implement the only state-transition and engineering-evaluation owner, including draft-to-approved specs, revision-aware invalidation, prepared run orchestration without holding a database transaction during plugin execution, retry, cancellation boundaries, cost provenance, and maturity gating.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    },
+    {
+      "id": "G005-loopback-api-security",
+      "title": "Loopback API security",
+      "objective": "Expose the workflow through a local FastAPI service with loopback binding, host and origin allowlists, mutation CSRF, exact JSON content type, body limits, validation, stable errors, idempotency, concurrency conflict responses, and API integration tests.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    },
+    {
+      "id": "G006-minimal-operator-interface",
+      "title": "Minimal operator interface",
+      "objective": "Build a thin Next.js interface for create, approve, run, inspect evidence, stale-conflict reload, double-submit deduplication, and failed-run retry; keep all engineering calculations in the service.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    },
+    {
+      "id": "G007-release-quality-gates",
+      "title": "Release quality gates",
+      "objective": "Complete documentation and traceability, run cleanup without behavior change, rerun tests, lint, type checking, build and smoke checks, conduct comprehensive code review and adversarial QA, fix findings, and publish the verified R0 handoff with physical-device features still gated.",
+      "status": "pending",
+      "attempt": 0,
+      "createdAt": "2026-08-27T12:28:53.182Z",
+      "updatedAt": "2026-08-27T12:28:53.182Z"
+    }
+  ],
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail.",
+  "activeGoalId": "G001-baseline-and-contracts"
+}

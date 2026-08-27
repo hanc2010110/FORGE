@@ -1,0 +1,43 @@
+[project]
+name = "project-forge"
+version = "0.1.0"
+description = "Deterministic contract kernel for Project FORGE"
+requires-python = "==3.14.3"
+dependencies = ["pydantic>=2.12,<3"]
+
+[build-system]
+requires = ["setuptools==81.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["forge_core*", "plugins*"]
+
+[project.optional-dependencies]
+dev = ["coverage>=7,<8", "mypy>=1.16,<2", "ruff>=0.12,<1"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["forge_core", "plugins", "tests"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.coverage.run]
+branch = true
+source = ["forge_core", "plugins", "tests"]
+omit = ["forge_core/demo.py"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

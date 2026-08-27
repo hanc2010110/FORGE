@@ -1,0 +1,51 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# JavaScript / TypeScript
+node_modules/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Local project data and generated engineering artifacts
+projects/
+artifacts/
+*.sqlite
+*.sqlite3
+*.db
+*.step
+*.stp
+*.stl
+*.glb
+*.gltf
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+tmp/
+.tmp/
+
+# Local OMX runtime state (plans and review artifacts remain versioned)
+.omx/state/
+.omx/tmux-hook.json

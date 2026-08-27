@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "project_id": "local-uuid",
+  "spec_id": "spec-uuid",
+  "spec_version": 1,
+  "status": "approved",
+  "intent": "120 mm 냉각 팬 장착 브래킷 검증",
+  "trust_mode": "explorer",
+  "model": {
+    "plugin_id": "structures.cantilever_rectangular",
+    "plugin_version": "1.0.0",
+    "schema_version": "1.0.0",
+    "artifact_hash": "sha256:7a33fbc8e1199c40ba8e2b050bb65605dca9eb58608609cd4701dc0d941e66d8"
+  },
+  "parameters": {
+    "length": {
+      "value": 0.12,
+      "unit": "m",
+      "dimension": "length",
+      "uncertainty": null,
+      "source": {"kind": "user", "identifier": "answer:length"}
+    },
+    "width": {
+      "value": 0.025,
+      "unit": "m",
+      "dimension": "length",
+      "uncertainty": null,
+      "source": {"kind": "user", "identifier": "answer:width"}
+    },
+    "thickness": {
+      "value": 0.003,
+      "unit": "m",
+      "dimension": "length",
+      "uncertainty": null,
+      "source": {"kind": "user", "identifier": "answer:thickness"}
+    },
+    "end_load": {
+      "value": 18,
+      "unit": "N",
+      "dimension": "force",
+      "uncertainty": {"absolute": 0.5, "unit": "N"},
+      "source": {"kind": "user", "identifier": "answer:end_load"}
+    }
+  },
+  "material": {
+    "material_id": "aluminum_6061_t6",
+    "dataset_version": "forge-materials-1.0.0",
+    "elastic_modulus": {
+      "value": 69000000000,
+      "unit": "Pa",
+      "dimension": "pressure",
+      "uncertainty": null,
+      "source": {
+        "kind": "dataset",
+        "identifier": "aluminum_6061_t6.elastic_modulus",
+        "version": "forge-materials-1.0.0",
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "yield_strength": {
+      "value": 276000000,
+      "unit": "Pa",
+      "dimension": "pressure",
+      "uncertainty": null,
+      "source": {
+        "kind": "dataset",
+        "identifier": "aluminum_6061_t6.yield_strength",
+        "version": "forge-materials-1.0.0",
+        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  },
+  "requirements": [
+    {
+      "id": "max_tip_deflection",
+      "metric": "tip_deflection",
+      "operator": "<=",
+      "target": {
+        "value": 0.001,
+        "unit": "m",
+        "dimension": "length",
+        "uncertainty": null,
+        "source": {
+          "kind": "user",
+          "identifier": "requirement:max_tip_deflection"
+        }
+      },
+      "priority": "required",
+      "tolerance": {"absolute": 0.000001, "unit": "m"}
+    }
+  ],
+  "assumptions": [],
+  "unknowns": [],
+  "approved_at": "2026-08-27T00:00:00Z"
+}
