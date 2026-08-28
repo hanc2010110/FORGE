@@ -284,6 +284,7 @@ class ContractModelTests(unittest.TestCase):
             spec_hash="sha256:" + "1" * 64,
             revision_id="revision-1",
             revision_hash="sha256:" + "2" * 64,
+            revision_number=1,
             engine_version="engine-1",
             policy_version="policy-1",
             plugin=PluginRef(

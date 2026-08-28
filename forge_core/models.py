@@ -255,6 +255,7 @@ class PreparedAnalysisBinding(ContractModel):
         default=None,
         pattern=r"^sha256:[0-9a-f]{64}$",
     )
+    revision_number: int | None = Field(default=None, ge=1)
     engine_version: str = Field(min_length=1)
     policy_version: str = Field(min_length=1)
     plugin: PluginRef
@@ -266,8 +267,18 @@ class PreparedAnalysisBinding(ContractModel):
 
     @model_validator(mode="after")
     def validate_binding(self) -> PreparedAnalysisBinding:
-        if (self.revision_id is None) != (self.revision_hash is None):
-            raise ValueError("revision_id and revision_hash must be provided together")
+        revision_values = (
+            self.revision_id,
+            self.revision_hash,
+            self.revision_number,
+        )
+        if any(item is None for item in revision_values) and not all(
+            item is None for item in revision_values
+        ):
+            raise ValueError(
+                "revision_id, revision_hash and revision_number "
+                "must be provided together"
+            )
         if len(self.expected_requirement_ids) != len(
             set(self.expected_requirement_ids)
         ):
@@ -323,6 +334,7 @@ class PreparedAnalysisBinding(ContractModel):
             and (
                 revision_approval is None
                 or revision_approval.subject_id != self.revision_id
+                or revision_approval.subject_version != self.revision_number
                 or revision_approval.subject_hash != self.revision_hash
             )
         ):

@@ -6,12 +6,22 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
+from forge_core.design import (
+    ArtifactKind,
+    RevisionArtifact,
+    SystemDesignRevision,
+    revision_hash,
+)
 from forge_core.engine import AnalysisEngine, PluginRegistration
+from forge_core.hashing import canonical_sha256
 from forge_core.models import (
     AnalysisResult,
+    ApprovalRef,
+    ApprovalSubjectKind,
     EngineeringSpec,
     PluginRef,
     PreflightResult,
+    PreparedAnalysis,
     Quantity,
     Requirement,
     RequirementPriority,
@@ -113,6 +123,65 @@ def make_spec(
         approved_at=datetime(2026, 8, 27, tzinfo=UTC)
         if status is SpecStatus.APPROVED
         else None,
+    )
+
+
+def approval_for(
+    spec: EngineeringSpec,
+    *,
+    revision: SystemDesignRevision | None = None,
+) -> tuple[ApprovalRef, ...]:
+    assert spec.approved_at is not None
+    approvals = [
+        ApprovalRef(
+            approval_id=f"approval:{spec.spec_id}:{spec.spec_version}",
+            subject_kind=ApprovalSubjectKind.ENGINEERING_SPEC,
+            project_id=spec.project_id,
+            subject_id=spec.spec_id,
+            subject_version=spec.spec_version,
+            subject_hash=canonical_sha256(spec),
+            approved_by="local-user",
+            approved_at=spec.approved_at,
+        )
+    ]
+    if revision is not None:
+        approvals.append(
+            ApprovalRef(
+                approval_id=f"approval:{revision.revision_id}",
+                subject_kind=ApprovalSubjectKind.SYSTEM_DESIGN_REVISION,
+                project_id=revision.project_id,
+                subject_id=revision.revision_id,
+                subject_version=revision.revision_number,
+                subject_hash=revision_hash(revision),
+                approved_by="local-user",
+                approved_at=revision.approved_at,
+            )
+        )
+    return tuple(approvals)
+
+
+def make_revision(number: int = 1) -> SystemDesignRevision:
+    required = (
+        ArtifactKind.SYSTEM_SPEC,
+        ArtifactKind.INTERFACE,
+        ArtifactKind.BOM,
+        ArtifactKind.BUDGET_POLICY,
+    )
+    return SystemDesignRevision(
+        project_id="project-1",
+        revision_id=f"revision-{number}",
+        revision_number=number,
+        parent_revision_id="revision-1" if number > 1 else None,
+        approved_at=datetime(2026, 8, 27, tzinfo=UTC),
+        artifacts=tuple(
+            RevisionArtifact(
+                artifact_id=f"artifact:{item.value}",
+                kind=item,
+                version=str(number),
+                content_hash=f"sha256:{number:064x}",
+            )
+            for item in required
+        ),
     )
 
 
@@ -591,6 +660,347 @@ class AnalysisEngineTests(unittest.TestCase):
         self.assertNotEqual(
             first.run.manifest.verification_hash,
             second.run.manifest.verification_hash,
+        )
+
+    def test_prepare_requires_exact_approval_before_acceptance(self) -> None:
+        spec = make_spec()
+
+        prepared = self.engine.prepare(spec, self.plugin, approval_refs=())
+
+        self.assertFalse(prepared.binding.preflight.accepted)
+        self.assertIn(
+            "required_spec_approval_missing",
+            prepared.binding.preflight.reason_codes,
+        )
+        outcome = self.engine.execute_prepared(prepared, spec, self.plugin)
+        self.assertIsNone(outcome.run)
+
+    def test_execute_wrapper_preserves_deterministic_rejection_evidence_ref(
+        self,
+    ) -> None:
+        outcome = self.engine.execute(make_spec(include_input=False), self.plugin)
+
+        self.assertIsNone(outcome.run)
+        self.assertEqual(
+            outcome.verifications[0].evidence_refs,
+            ("preflight:spec-1:1",),
+        )
+
+    def test_prepare_then_execute_does_not_repeat_preflight(self) -> None:
+        class CountingPlugin(FakePhysicsPlugin):
+            preflight_calls = 0
+            run_calls = 0
+
+            def preflight(self, spec: EngineeringSpec) -> PreflightResult:
+                self.preflight_calls += 1
+                return super().preflight(spec)
+
+            def run(self, spec: EngineeringSpec) -> AnalysisResult:
+                self.run_calls += 1
+                return super().run(spec)
+
+        plugin = CountingPlugin()
+        engine, registration = engine_for(plugin)
+        spec = make_spec(registration=registration)
+
+        prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+            preparation_id="preparation-1",
+        )
+        outcome = engine.execute_prepared(
+            prepared,
+            spec,
+            plugin,
+            run_id="run-fixed",
+        )
+
+        self.assertTrue(prepared.binding.preflight.accepted)
+        self.assertEqual(plugin.preflight_calls, 1)
+        self.assertEqual(plugin.run_calls, 1)
+        assert outcome.run is not None
+        self.assertEqual(outcome.run.run_id, "run-fixed")
+
+    def test_execute_prepared_blocks_stale_or_tampered_inputs_before_run(self) -> None:
+        class CountingPlugin(FakePhysicsPlugin):
+            run_calls = 0
+
+            def run(self, spec: EngineeringSpec) -> AnalysisResult:
+                self.run_calls += 1
+                return super().run(spec)
+
+        cases = ("stale_spec", "tampered_token", "engine_changed")
+        for case in cases:
+            with self.subTest(case=case):
+                plugin = CountingPlugin()
+                engine, registration = engine_for(plugin)
+                spec = make_spec(registration=registration)
+                prepared = engine.prepare(
+                    spec,
+                    plugin,
+                    approval_refs=approval_for(spec),
+                )
+                executing_engine = engine
+                executing_spec = spec
+                executing_prepared = prepared
+                if case == "stale_spec":
+                    payload = spec.model_dump(mode="python")
+                    payload["parameters"] = {"input_value": quantity(3.0)}
+                    executing_spec = EngineeringSpec.model_validate(payload)
+                elif case == "tampered_token":
+                    executing_prepared = prepared.model_copy(
+                        update={
+                            "binding": prepared.binding.model_copy(
+                                update={"policy_version": "tampered"}
+                            )
+                        }
+                    )
+                else:
+                    executing_engine = AnalysisEngine(
+                        engine_version="0.2.0",
+                        policy_version="1.0.0",
+                        allowed_plugins={registration},
+                    )
+
+                outcome = executing_engine.execute_prepared(
+                    executing_prepared,
+                    executing_spec,
+                    plugin,
+                )
+
+                self.assertIsNone(outcome.run)
+                self.assertFalse(outcome.preflight.accepted)
+                self.assertEqual(plugin.run_calls, 0)
+
+    def test_execute_prepared_rechecks_bound_design_revision(self) -> None:
+        plugin = FakePhysicsPlugin()
+        engine, registration = engine_for(plugin)
+        spec = make_spec(registration=registration)
+        first_revision = make_revision()
+        prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec, revision=first_revision),
+            revision=first_revision,
+        )
+
+        outcome = engine.execute_prepared(
+            prepared,
+            spec,
+            plugin,
+            revision=make_revision(2),
+        )
+
+        self.assertIsNone(outcome.run)
+        self.assertIn("prepared_revision_mismatch", outcome.preflight.reason_codes)
+
+    def test_engine_policy_mutation_during_plugin_run_fails_closed(self) -> None:
+        class EngineMutatingPlugin(FakePhysicsPlugin):
+            engine: AnalysisEngine | None = None
+
+            def run(self, spec: EngineeringSpec) -> AnalysisResult:
+                assert self.engine is not None
+                self.engine.policy_version = "mutated-during-run"
+                return super().run(spec)
+
+        plugin = EngineMutatingPlugin()
+        engine, registration = engine_for(plugin)
+        plugin.engine = engine
+        spec = make_spec(registration=registration)
+        prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+        )
+
+        outcome = engine.execute_prepared(prepared, spec, plugin)
+
+        assert outcome.run is not None
+        self.assertEqual(outcome.run.status, RunStatus.FAILED)
+        self.assertEqual(outcome.run.error_code, "engine_policy_identity_changed")
+        self.assertIsNone(outcome.run.manifest)
+
+    def test_engine_policy_mutation_during_preflight_rejects_preparation(
+        self,
+    ) -> None:
+        class PreflightMutatingPlugin(FakePhysicsPlugin):
+            engine: AnalysisEngine | None = None
+
+            def preflight(self, spec: EngineeringSpec) -> PreflightResult:
+                assert self.engine is not None
+                self.engine.policy_version = "mutated-during-preflight"
+                return super().preflight(spec)
+
+        plugin = PreflightMutatingPlugin()
+        engine, registration = engine_for(plugin)
+        plugin.engine = engine
+        spec = make_spec(registration=registration)
+
+        prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+        )
+
+        self.assertFalse(prepared.binding.preflight.accepted)
+        self.assertIn(
+            "engine_policy_identity_changed",
+            prepared.binding.preflight.reason_codes,
+        )
+        self.assertEqual(prepared.binding.policy_version, "1.0.0")
+
+    def test_execute_wrapper_matches_two_stage_success_contract(self) -> None:
+        spec = make_spec()
+
+        wrapped = self.engine.execute(spec, self.plugin)
+        prepared = self.engine.prepare(
+            spec,
+            self.plugin,
+            approval_refs=approval_for(spec),
+        )
+        staged = self.engine.execute_prepared(prepared, spec, self.plugin)
+
+        assert wrapped.run is not None and staged.run is not None
+        self.assertEqual(wrapped.run.analysis_result, staged.run.analysis_result)
+        self.assertEqual(wrapped.run.manifest, staged.run.manifest)
+        self.assertEqual(wrapped.verifications, staged.verifications)
+        self.assertNotEqual(wrapped.run.run_id, staged.run.run_id)
+
+    def test_prepare_rejects_invalid_stale_and_revision_approvals(self) -> None:
+        plugin = FakePhysicsPlugin()
+        engine, registration = engine_for(plugin)
+        spec = make_spec(registration=registration)
+        spec_approval = approval_for(spec)[0]
+        revision = make_revision()
+        revision_approval = approval_for(spec, revision=revision)[1]
+        cases = (
+            (
+                "duplicate",
+                (spec_approval, spec_approval),
+                None,
+                "invalid_approval_contract",
+            ),
+            (
+                "stale_spec",
+                (
+                    spec_approval.model_copy(
+                        update={"subject_hash": "sha256:" + "0" * 64}
+                    ),
+                ),
+                None,
+                "required_spec_approval_stale",
+            ),
+            (
+                "missing_revision",
+                (spec_approval,),
+                revision,
+                "required_revision_approval_missing",
+            ),
+            (
+                "stale_revision",
+                (
+                    spec_approval,
+                    revision_approval.model_copy(
+                        update={"subject_hash": "sha256:" + "0" * 64}
+                    ),
+                ),
+                revision,
+                "required_revision_approval_stale",
+            ),
+        )
+        for name, approvals, selected_revision, reason in cases:
+            with self.subTest(name=name):
+                prepared = engine.prepare(
+                    spec,
+                    plugin,
+                    approval_refs=approvals,
+                    revision=selected_revision,
+                )
+                self.assertFalse(prepared.binding.preflight.accepted)
+                self.assertIn(reason, prepared.binding.preflight.reason_codes)
+
+    def test_prepare_rejects_invalid_or_cross_project_revision(self) -> None:
+        plugin = FakePhysicsPlugin()
+        engine, registration = engine_for(plugin)
+        spec = make_spec(registration=registration)
+        valid = make_revision()
+        invalid = valid.model_copy(update={"artifacts": ()})
+        cross_project = valid.model_copy(update={"project_id": "other-project"})
+
+        invalid_prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+            revision=invalid,
+        )
+        cross_project_prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+            revision=cross_project,
+        )
+
+        self.assertIn(
+            "invalid_revision_contract",
+            invalid_prepared.binding.preflight.reason_codes,
+        )
+        self.assertIn(
+            "revision_project_mismatch",
+            cross_project_prepared.binding.preflight.reason_codes,
+        )
+
+    def test_execute_prepared_rejects_resealed_expectations_and_bad_revision(
+        self,
+    ) -> None:
+        plugin = FakePhysicsPlugin()
+        engine, registration = engine_for(plugin)
+        spec = make_spec(registration=registration)
+        prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec),
+        )
+        changed_binding = prepared.binding.model_copy(
+            update={"expected_metrics": ("different_metric",)}
+        )
+        resealed = PreparedAnalysis(
+            preparation_id=prepared.preparation_id,
+            binding=changed_binding,
+            prepare_hash=canonical_sha256(changed_binding),
+        )
+
+        expectation_outcome = engine.execute_prepared(resealed, spec, plugin)
+
+        self.assertIn(
+            "prepared_expectations_mismatch",
+            expectation_outcome.preflight.reason_codes,
+        )
+
+        revision = make_revision()
+        revision_prepared = engine.prepare(
+            spec,
+            plugin,
+            approval_refs=approval_for(spec, revision=revision),
+            revision=revision,
+        )
+        invalid_revision = revision.model_copy(update={"artifacts": ()})
+        revision_outcome = engine.execute_prepared(
+            revision_prepared,
+            spec,
+            plugin,
+            revision=invalid_revision,
+        )
+        self.assertIn(
+            "invalid_revision_contract",
+            revision_outcome.preflight.reason_codes,
+        )
+
+        plugin.plugin_version = "mutated"
+        plugin_outcome = engine.execute_prepared(prepared, spec, plugin)
+        self.assertIn(
+            "prepared_plugin_mismatch",
+            plugin_outcome.preflight.reason_codes,
         )
 
 

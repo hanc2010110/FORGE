@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-27T12:28:57.229Z",
+  "updatedAt": "2026-08-28T12:08:15.637Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -11,20 +11,25 @@
       "id": "G001-baseline-and-contracts",
       "title": "Baseline and contracts",
       "objective": "Lock the existing deterministic behavior, add only required dependencies, initialize safe local project metadata, and define versioned domain contracts for specifications, approvals, prepared analyses, and lifecycle events.",
-      "status": "in_progress",
+      "status": "complete",
       "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:57.229Z",
-      "startedAt": "2026-08-27T12:28:57.229Z"
+      "updatedAt": "2026-08-27T12:43:37.774Z",
+      "startedAt": "2026-08-27T12:28:57.229Z",
+      "completedAt": "2026-08-27T12:43:37.774Z",
+      "evidence": "72 tests passed; 96% branch coverage; Ruff, mypy, lock check, pip check passed; immutable ApprovalRef, PreparedAnalysis, and append-only RunStateEvent contracts added; Git baseline commit 997621c created."
     },
     {
       "id": "G002-two-stage-analysis-engine",
       "title": "Two-stage analysis engine",
       "objective": "Split analysis into durable prepare and execute_prepared stages while preserving the existing execute wrapper; bind preflight to spec, revision, policy, engine, plugin, expected metrics, and approvals; reject stale or tampered preparation before plugin execution.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-28T12:08:15.637Z",
+      "startedAt": "2026-08-27T12:43:41.143Z",
+      "completedAt": "2026-08-28T12:08:15.637Z",
+      "evidence": "83 tests passed; 96% branch coverage; Ruff, formatting, mypy, lock and pip checks passed; independent re-review APPROVE; durable prepare/execute_prepared binding rejects stale or tampered state before plugin execution."
     },
     {
       "id": "G003-sqlite-evidence-store",
@@ -72,6 +77,5 @@
       "updatedAt": "2026-08-27T12:28:53.182Z"
     }
   ],
-  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail.",
-  "activeGoalId": "G001-baseline-and-contracts"
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
 }
