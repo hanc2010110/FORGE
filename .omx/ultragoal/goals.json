@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-28T12:08:15.637Z",
+  "updatedAt": "2026-08-28T12:58:06.167Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -35,10 +35,13 @@
       "id": "G003-sqlite-evidence-store",
       "title": "SQLite evidence store",
       "objective": "Implement migration-managed SQLite persistence for projects, specs, revisions, approvals, prepared analyses, append-only run events, results, idempotency, optimistic concurrency, startup recovery, and byte-stable evidence export.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-28T12:58:06.167Z",
+      "startedAt": "2026-08-28T12:08:29.647Z",
+      "completedAt": "2026-08-28T12:58:06.167Z",
+      "evidence": "Implemented migration-managed SQLite persistence with WAL/FK/bounded retries, optimistic CAS, atomic domain+idempotency transactions, immutable specs/revisions/approvals/preparations/run events/results/evidence, validated startup-recovery discovery, corrupt row/payload rejection, and byte-stable snapshot export. ./forge verify passed: Ruff, strict mypy, lock checks, 102 tests, 93% total coverage. Independent code review APPROVE and architecture verification CLEAR."
     },
     {
       "id": "G004-application-workflow-service",
