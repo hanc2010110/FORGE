@@ -177,6 +177,9 @@ def evaluate_cost(
         if quote.currency != currency:
             reasons.append(f"currency_mismatch:{line.part_number}")
             continue
+        if quote.observed_at > evaluated_at:
+            reasons.append(f"future_quote:{line.part_number}")
+            continue
         if quote.expires_at <= evaluated_at:
             reasons.append(f"expired_quote:{line.part_number}")
             continue

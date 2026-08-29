@@ -402,6 +402,25 @@ class ContractModelTests(unittest.TestCase):
 
         self.assertEqual(prepared.status, RunLifecycleStatus.PREPARED)
         self.assertEqual(running.previous_status, RunLifecycleStatus.QUEUED)
+        for sequence, previous in (
+            (3, RunLifecycleStatus.QUEUED),
+            (4, RunLifecycleStatus.RUNNING),
+        ):
+            with self.subTest(cancel_from=previous):
+                cancelled = RunStateEvent(
+                    event_id=f"event-cancel-{sequence}",
+                    project_id="project-1",
+                    run_id="run-1",
+                    preparation_id="preparation-1",
+                    prepare_hash="sha256:" + "1" * 64,
+                    sequence=sequence,
+                    previous_status=previous,
+                    status=RunLifecycleStatus.CANCELLED,
+                    actor="local-user",
+                    reason_code="cancelled",
+                    occurred_at=datetime(2026, 8, 27, tzinfo=UTC),
+                )
+                self.assertEqual(cancelled.status, RunLifecycleStatus.CANCELLED)
         with self.assertRaises(ValidationError):
             RunStateEvent(
                 event_id="event-invalid",

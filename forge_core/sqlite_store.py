@@ -13,7 +13,12 @@ from typing import Any, NoReturn, TypeVar
 
 from pydantic import ValidationError
 
-from forge_core.design import EvidenceRecord
+from forge_core.design import (
+    ArtifactKind,
+    EvidenceClass,
+    EvidenceRecord,
+    dependency_hash,
+)
 from forge_core.hashing import canonical_sha256
 from forge_core.models import (
     AnalysisRunRecord,
@@ -22,6 +27,7 @@ from forge_core.models import (
     ContractModel,
     RunLifecycleStatus,
     RunStateEvent,
+    SpecStatus,
     VerificationBundle,
 )
 from forge_core.persistence import (
@@ -36,7 +42,9 @@ from forge_core.persistence import (
     PersistenceError,
     ProjectRecord,
     RecordNotFoundError,
+    SpecStateEvent,
     StorageBusyError,
+    StoredCostEvaluation,
     StoredPreparation,
     StoredRevision,
     StoredRun,
@@ -123,6 +131,16 @@ class AtomicProjectWrite:
         self._require_project(record.project_id)
         self._store._insert_spec(self._connection, record)
 
+    def insert_approved_spec(self, record: StoredSpec) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_approved_spec(self._connection, record)
+
+    def append_spec_event(self, event: SpecStateEvent) -> None:
+        self._require_active()
+        self._require_project(event.project_id)
+        self._store._append_spec_event(self._connection, event)
+
     def insert_revision(self, record: StoredRevision) -> None:
         self._require_active()
         self._require_project(record.project_id)
@@ -162,6 +180,11 @@ class AtomicProjectWrite:
         self._require_active()
         self._store._insert_evidence(self._connection, self.project_id, evidence)
 
+    def insert_cost_evaluation(self, record: StoredCostEvaluation) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_cost_evaluation(self._connection, record)
+
     def _require_active(self) -> None:
         if self.deleted:
             raise IntegrityConflictError("atomic write cannot mutate a deleted project")
@@ -176,7 +199,7 @@ class AtomicProjectWrite:
 class SQLiteEvidenceStore:
     """Short-transaction SQLite repository for immutable FORGE evidence."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
     BUSY_TIMEOUT_MS = 100
     RETRY_DELAYS = (0.025, 0.05, 0.1)
 
@@ -278,6 +301,8 @@ class SQLiteEvidenceStore:
             ).fetchone()
             if row is None or int(row["version"]) != version:
                 raise MigrationError("migration history does not match user_version")
+            if version < self.SCHEMA_VERSION:
+                self._migrate(connection, version)
         except sqlite3.OperationalError as exc:
             self._raise_operational(exc)
         finally:
@@ -308,6 +333,34 @@ class SQLiteEvidenceStore:
                     payload_json TEXT NOT NULL,
                     stored_at TEXT NOT NULL,
                     PRIMARY KEY(project_id, spec_id, spec_version)
+                );
+                CREATE TABLE approved_specs(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    spec_id TEXT NOT NULL,
+                    spec_version INTEGER NOT NULL CHECK(spec_version >= 1),
+                    spec_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, spec_id, spec_version),
+                    FOREIGN KEY(project_id, spec_id, spec_version)
+                        REFERENCES specs(project_id, spec_id, spec_version)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE spec_state_events(
+                    event_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    spec_id TEXT NOT NULL,
+                    spec_version INTEGER NOT NULL CHECK(spec_version >= 1),
+                    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 3),
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    UNIQUE(project_id, spec_id, spec_version, sequence),
+                    FOREIGN KEY(project_id, spec_id, spec_version)
+                        REFERENCES specs(project_id, spec_id, spec_version)
+                        ON DELETE CASCADE
                 );
                 CREATE TABLE revisions(
                     project_id TEXT NOT NULL REFERENCES projects(project_id)
@@ -371,6 +424,15 @@ class SQLiteEvidenceStore:
                     payload_json TEXT NOT NULL,
                     recorded_at TEXT NOT NULL
                 );
+                CREATE TABLE cost_evaluations(
+                    evidence_id TEXT PRIMARY KEY
+                        REFERENCES evidence_records(evidence_id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    revision_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL
+                );
                 CREATE TABLE idempotency_records(
                     operation TEXT NOT NULL,
                     project_id TEXT NOT NULL,
@@ -383,7 +445,9 @@ class SQLiteEvidenceStore:
                 );
                 INSERT INTO schema_migrations(version, applied_at)
                     VALUES(1, '2026-08-28T00:00:00.000000Z');
-                PRAGMA user_version = 1;
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(2, '2026-08-29T00:00:00.000000Z');
+                PRAGMA user_version = 2;
                 COMMIT;
                 """
             )
@@ -391,6 +455,61 @@ class SQLiteEvidenceStore:
             with suppress(sqlite3.Error):
                 connection.rollback()
             raise MigrationError("failed to initialize SQLite schema") from exc
+
+    def _migrate(self, connection: sqlite3.Connection, version: int) -> None:
+        if version != 1:
+            raise MigrationError(f"no migration path from schema {version}")
+        try:
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE approved_specs(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    spec_id TEXT NOT NULL,
+                    spec_version INTEGER NOT NULL CHECK(spec_version >= 1),
+                    spec_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, spec_id, spec_version),
+                    FOREIGN KEY(project_id, spec_id, spec_version)
+                        REFERENCES specs(project_id, spec_id, spec_version)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE spec_state_events(
+                    event_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    spec_id TEXT NOT NULL,
+                    spec_version INTEGER NOT NULL CHECK(spec_version >= 1),
+                    sequence INTEGER NOT NULL CHECK(sequence BETWEEN 1 AND 3),
+                    status TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    UNIQUE(project_id, spec_id, spec_version, sequence),
+                    FOREIGN KEY(project_id, spec_id, spec_version)
+                        REFERENCES specs(project_id, spec_id, spec_version)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE cost_evaluations(
+                    evidence_id TEXT PRIMARY KEY
+                        REFERENCES evidence_records(evidence_id) ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    revision_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(2, '2026-08-29T00:00:00.000000Z');
+                PRAGMA user_version = 2;
+                COMMIT;
+                """
+            )
+        except sqlite3.Error as exc:
+            with suppress(sqlite3.Error):
+                connection.rollback()
+            raise MigrationError("failed to migrate SQLite schema") from exc
 
     def create_project(self, project: ProjectRecord) -> ProjectRecord:
         def insert(connection: sqlite3.Connection) -> ProjectRecord:
@@ -529,6 +648,32 @@ class SQLiteEvidenceStore:
         with self._reading() as connection:
             row = connection.execute(
                 """
+                SELECT * FROM approved_specs
+                WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                """,
+                (project_id, spec_id, spec_version),
+            ).fetchone()
+            draft_row = connection.execute(
+                """
+                SELECT * FROM specs
+                WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                """,
+                (project_id, spec_id, spec_version),
+            ).fetchone()
+        if row is None:
+            if draft_row is None:
+                raise RecordNotFoundError("record not found")
+            return self._spec_from_row(draft_row)
+        if draft_row is None:
+            raise CorruptRecordError("approved spec has no draft")
+        return self._approved_spec_from_rows(row, draft_row)
+
+    def get_draft_spec(
+        self, project_id: str, spec_id: str, spec_version: int
+    ) -> StoredSpec:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
                 SELECT * FROM specs
                 WHERE project_id = ? AND spec_id = ? AND spec_version = ?
                 """,
@@ -537,6 +682,178 @@ class SQLiteEvidenceStore:
         if row is None:
             raise RecordNotFoundError("record not found")
         return self._spec_from_row(row)
+
+    def get_approved_spec(
+        self, project_id: str, spec_id: str, spec_version: int
+    ) -> StoredSpec:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM approved_specs
+                WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                """,
+                (project_id, spec_id, spec_version),
+            ).fetchone()
+            draft_row = connection.execute(
+                """
+                SELECT * FROM specs
+                WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                """,
+                (project_id, spec_id, spec_version),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("approved spec not found")
+        if draft_row is None:
+            raise CorruptRecordError("approved spec has no draft")
+        return self._approved_spec_from_rows(row, draft_row)
+
+    def list_specs(self, project_id: str, spec_id: str) -> tuple[StoredSpec, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT d.*, a.payload_json AS approved_payload_json,
+                       a.spec_hash AS approved_spec_hash,
+                       a.stored_at AS approved_stored_at
+                FROM specs d
+                LEFT JOIN approved_specs a
+                  ON a.project_id = d.project_id
+                 AND a.spec_id = d.spec_id
+                 AND a.spec_version = d.spec_version
+                WHERE d.project_id = ? AND d.spec_id = ?
+                ORDER BY d.spec_version
+                """,
+                (project_id, spec_id),
+            ).fetchall()
+        values: list[StoredSpec] = []
+        for row in rows:
+            draft = self._spec_from_row(row)
+            if row["approved_payload_json"] is None:
+                values.append(draft)
+                continue
+            approved = self._decode(StoredSpec, row["approved_payload_json"])
+            self._require_binding(
+                approved.project_id == row["project_id"]
+                and approved.spec_id == row["spec_id"]
+                and approved.spec_version == int(row["spec_version"])
+                and approved.spec_hash == row["approved_spec_hash"]
+                and _utc_text(approved.stored_at) == row["approved_stored_at"],
+                "approved spec row does not match its payload",
+            )
+            self._require_approved_snapshot(draft, approved)
+            values.append(approved)
+        return tuple(values)
+
+    def store_approved_spec(
+        self, record: StoredSpec, *, expected_project_version: int
+    ) -> int:
+        def insert(connection: sqlite3.Connection) -> None:
+            self._insert_approved_spec(connection, record)
+
+        return self._project_write(
+            record.project_id, expected_project_version, record.stored_at, insert
+        )
+
+    def _insert_approved_spec(
+        self, connection: sqlite3.Connection, record: StoredSpec
+    ) -> None:
+        if record.spec.status is not SpecStatus.APPROVED:
+            raise IntegrityConflictError("approved snapshot must be approved")
+        row = connection.execute(
+            """
+            SELECT * FROM specs
+            WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+            """,
+            (record.project_id, record.spec_id, record.spec_version),
+        ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("draft spec not found")
+        draft = self._spec_from_row(row)
+        expected = draft.spec.model_copy(
+            update={
+                "status": SpecStatus.APPROVED,
+                "approved_at": record.spec.approved_at,
+            }
+        )
+        if draft.spec.status is not SpecStatus.DRAFT or expected != record.spec:
+            raise IntegrityConflictError(
+                "approved snapshot must preserve the exact draft payload"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO approved_specs VALUES(?, ?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.spec_id,
+                record.spec_version,
+                record.spec_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def append_spec_event(
+        self, event: SpecStateEvent, *, expected_project_version: int
+    ) -> int:
+        def insert(connection: sqlite3.Connection) -> None:
+            self._append_spec_event(connection, event)
+
+        return self._project_write(
+            event.project_id, expected_project_version, event.occurred_at, insert
+        )
+
+    def _append_spec_event(
+        self, connection: sqlite3.Connection, event: SpecStateEvent
+    ) -> None:
+        _safe_id(event.event_id, "event_id")
+        latest = connection.execute(
+            """
+            SELECT * FROM spec_state_events
+            WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            (event.project_id, event.spec_id, event.spec_version),
+        ).fetchone()
+        if latest is None:
+            if event.sequence != 1:
+                raise IntegrityConflictError("spec lifecycle must start at draft")
+        else:
+            previous = self._spec_event_from_row(latest)
+            if (
+                event.sequence != previous.sequence + 1
+                or event.previous_status is not previous.status
+                or event.occurred_at < previous.occurred_at
+            ):
+                raise IntegrityConflictError(
+                    "spec lifecycle must be append-only and contiguous"
+                )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO spec_state_events VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event.event_id,
+                event.project_id,
+                event.spec_id,
+                event.spec_version,
+                event.sequence,
+                event.status.value,
+                _canonical_model(event),
+                _utc_text(event.occurred_at),
+            ),
+        )
+
+    def list_spec_events(
+        self, project_id: str, spec_id: str, spec_version: int
+    ) -> tuple[SpecStateEvent, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM spec_state_events
+                WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                ORDER BY sequence
+                """,
+                (project_id, spec_id, spec_version),
+            ).fetchall()
+        return tuple(self._spec_event_from_row(row) for row in rows)
 
     def store_revision(
         self, record: StoredRevision, *, expected_project_version: int
@@ -592,6 +909,17 @@ class SQLiteEvidenceStore:
             raise RecordNotFoundError("record not found")
         return self._revision_from_row(row)
 
+    def list_revisions(self, project_id: str) -> tuple[StoredRevision, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM revisions
+                WHERE project_id = ? ORDER BY revision_number
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._revision_from_row(row) for row in rows)
+
     def store_approval(
         self, approval: ApprovalRef, *, expected_project_version: int
     ) -> int:
@@ -612,7 +940,7 @@ class SQLiteEvidenceStore:
         if approval.subject_kind is ApprovalSubjectKind.ENGINEERING_SPEC:
             row = connection.execute(
                 """
-                SELECT * FROM specs
+                SELECT * FROM approved_specs
                 WHERE project_id = ? AND spec_id = ? AND spec_version = ?
                 """,
                 (
@@ -621,6 +949,18 @@ class SQLiteEvidenceStore:
                     approval.subject_version,
                 ),
             ).fetchone()
+            if row is None:
+                row = connection.execute(
+                    """
+                    SELECT * FROM specs
+                    WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+                    """,
+                    (
+                        approval.project_id,
+                        approval.subject_id,
+                        approval.subject_version,
+                    ),
+                ).fetchone()
         else:
             row = connection.execute(
                 """
@@ -666,6 +1006,26 @@ class SQLiteEvidenceStore:
             raise RecordNotFoundError("record not found")
         return self._approval_from_row(row)
 
+    def get_subject_approval(
+        self,
+        project_id: str,
+        subject_kind: ApprovalSubjectKind,
+        subject_id: str,
+        subject_version: int,
+    ) -> ApprovalRef:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM approvals
+                WHERE project_id = ? AND subject_kind = ?
+                  AND subject_id = ? AND subject_version = ?
+                """,
+                (project_id, subject_kind.value, subject_id, subject_version),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("approval not found")
+        return self._approval_from_row(row)
+
     def store_preparation(
         self, record: StoredPreparation, *, expected_project_version: int
     ) -> int:
@@ -684,11 +1044,19 @@ class SQLiteEvidenceStore:
         binding = preparation.binding
         spec = connection.execute(
             """
-            SELECT * FROM specs
+            SELECT * FROM approved_specs
             WHERE project_id = ? AND spec_id = ? AND spec_version = ?
             """,
             (record.project_id, binding.spec_id, binding.spec_version),
         ).fetchone()
+        if spec is None:
+            spec = connection.execute(
+                """
+            SELECT * FROM specs
+            WHERE project_id = ? AND spec_id = ? AND spec_version = ?
+            """,
+                (record.project_id, binding.spec_id, binding.spec_version),
+            ).fetchone()
         if spec is None:
             raise RecordNotFoundError("prepared spec not found")
         if self._spec_from_row(spec).spec_hash != binding.spec_hash:
@@ -967,7 +1335,14 @@ class SQLiteEvidenceStore:
         ).fetchone()
         if revision is None:
             raise RecordNotFoundError("evidence revision not found")
-        self._revision_from_row(revision)
+        stored_revision = self._revision_from_row(revision)
+        expected_dependency_hash = dependency_hash(
+            stored_revision.revision, evidence.evidence_class
+        )
+        if evidence.dependency_hash != expected_dependency_hash:
+            raise IntegrityConflictError(
+                "evidence dependency hash must match its stored revision"
+            )
         self._insert_immutable(
             connection,
             "INSERT INTO evidence_records VALUES(?, ?, ?, ?, ?)",
@@ -991,6 +1366,94 @@ class SQLiteEvidenceStore:
             ).fetchall()
         return tuple(self._evidence_from_row(row, project_id) for row in rows)
 
+    def store_cost_evaluation(
+        self, record: StoredCostEvaluation, *, expected_project_version: int
+    ) -> int:
+        def insert(connection: sqlite3.Connection) -> None:
+            self._insert_cost_evaluation(connection, record)
+
+        return self._project_write(
+            record.project_id, expected_project_version, record.evaluated_at, insert
+        )
+
+    def _insert_cost_evaluation(
+        self, connection: sqlite3.Connection, record: StoredCostEvaluation
+    ) -> None:
+        _safe_id(record.evidence_id, "evidence_id")
+        evidence = connection.execute(
+            "SELECT * FROM evidence_records WHERE evidence_id = ?",
+            (record.evidence_id,),
+        ).fetchone()
+        if evidence is None:
+            raise RecordNotFoundError("cost evidence record not found")
+        stored_evidence = self._evidence_from_row(evidence, record.project_id)
+        revision_row = connection.execute(
+            """
+            SELECT * FROM revisions
+            WHERE project_id = ? AND revision_id = ?
+            """,
+            (record.project_id, record.revision_id),
+        ).fetchone()
+        if revision_row is None:
+            raise RecordNotFoundError("cost revision not found")
+        stored_revision = self._revision_from_row(revision_row)
+        revision_artifacts = stored_revision.revision.artifact_map()
+        expected_dependency_hash = dependency_hash(
+            stored_revision.revision, EvidenceClass.COST
+        )
+        expected_evidence_refs = {
+            *(f"quote:{quote.quote_id}" for quote in record.quotes),
+            *(f"source:{quote.source_hash}" for quote in record.quotes),
+        }
+        if (
+            stored_evidence.evidence_class is not EvidenceClass.COST
+            or stored_evidence.produced_for_revision_id != record.revision_id
+            or stored_evidence.dependency_hash != expected_dependency_hash
+            or stored_evidence.dependency_hash != record.dependency_hash
+            or stored_evidence.verdict is not record.evaluation.verdict
+            or set(stored_evidence.evidence_refs) != expected_evidence_refs
+            or record.bom_artifact_hash
+            != revision_artifacts[ArtifactKind.BOM].content_hash
+            or stored_evidence.recorded_at != record.evaluated_at
+        ):
+            raise IntegrityConflictError(
+                "cost provenance must bind its exact COST evidence record"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO cost_evaluations VALUES(?, ?, ?, ?, ?)",
+            (
+                record.evidence_id,
+                record.project_id,
+                record.revision_id,
+                _canonical_model(record),
+                _utc_text(record.evaluated_at),
+            ),
+        )
+
+    def get_cost_evaluation(self, evidence_id: str) -> StoredCostEvaluation:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM cost_evaluations WHERE evidence_id = ?",
+                (evidence_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("cost evaluation not found")
+        return self._cost_evaluation_from_row(row)
+
+    def list_cost_evaluations(
+        self, project_id: str
+    ) -> tuple[StoredCostEvaluation, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM cost_evaluations
+                WHERE project_id = ? ORDER BY evaluated_at, evidence_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._cost_evaluation_from_row(row) for row in rows)
+
     def put_idempotency(self, record: IdempotencyRecord) -> str:
         def put(connection: sqlite3.Connection) -> str:
             existing = self._load_idempotency(connection, record)
@@ -1010,6 +1473,32 @@ class SQLiteEvidenceStore:
             return record.response_json
 
         return self._write(put)
+
+    def find_idempotency(
+        self,
+        operation: str,
+        project_id: str,
+        local_installation_id: str,
+        key: str,
+        request_hash: str,
+    ) -> str | None:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM idempotency_records
+                WHERE operation = ? AND project_id = ?
+                  AND local_installation_id = ? AND key = ?
+                """,
+                (operation, project_id, local_installation_id, key),
+            ).fetchone()
+        if row is None:
+            return None
+        stored = self._idempotency_from_row(row)
+        if stored.request_hash != request_hash:
+            raise IdempotencyConflictError(
+                "idempotency key was reused for a different request"
+            )
+        return stored.response_json
 
     def transact_idempotently(
         self,
@@ -1118,7 +1607,18 @@ class SQLiteEvidenceStore:
         ).fetchone()
         if row is None:
             return None
-        stored = self._validate(
+        stored = self._idempotency_from_row(row)
+        self._require_binding(
+            stored.operation == requested.operation
+            and stored.project_id == requested.project_id
+            and stored.local_installation_id == requested.local_installation_id
+            and stored.key == requested.key,
+            "idempotency row identity does not match its key",
+        )
+        return stored
+
+    def _idempotency_from_row(self, row: sqlite3.Row) -> IdempotencyRecord:
+        return self._validate(
             IdempotencyRecord,
             {
                 "operation": row["operation"],
@@ -1130,14 +1630,6 @@ class SQLiteEvidenceStore:
                 "created_at": row["created_at"],
             },
         )
-        self._require_binding(
-            stored.operation == requested.operation
-            and stored.project_id == requested.project_id
-            and stored.local_installation_id == requested.local_installation_id
-            and stored.key == requested.key,
-            "idempotency row identity does not match its key",
-        )
-        return stored
 
     @staticmethod
     def _insert_idempotency(
@@ -1193,6 +1685,31 @@ class SQLiteEvidenceStore:
             )
         return tuple(interrupted)
 
+    def list_active_runs(self, project_id: str) -> tuple[StoredRun, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT e.* FROM run_events e
+                JOIN (
+                    SELECT run_id, MAX(sequence) AS latest_sequence
+                    FROM run_events GROUP BY run_id
+                ) latest ON latest.run_id = e.run_id
+                    AND latest.latest_sequence = e.sequence
+                WHERE e.project_id = ?
+                ORDER BY e.run_id
+                """,
+                (project_id,),
+            ).fetchall()
+            active: list[StoredRun] = []
+            for row in rows:
+                event = self._event_from_row(row)
+                if event.status in {
+                    RunLifecycleStatus.QUEUED,
+                    RunLifecycleStatus.RUNNING,
+                }:
+                    active.append(self._load_run(connection, event.run_id))
+        return tuple(active)
+
     def export_project(self, project_id: str) -> EvidenceExport:
         entries: list[dict[str, object]] = []
         with self._reading() as connection:
@@ -1220,6 +1737,29 @@ class SQLiteEvidenceStore:
                 "WHERE project_id = ? ORDER BY spec_id, spec_version",
                 project_id,
                 lambda row: f"specs/{row['spec_id']}-v{row['spec_version']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._spec_from_row,
+                "SELECT * FROM approved_specs "
+                "WHERE project_id = ? ORDER BY spec_id, spec_version",
+                project_id,
+                lambda row: (
+                    f"specs/{row['spec_id']}-v{row['spec_version']}-approved.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._spec_event_from_row,
+                "SELECT * FROM spec_state_events "
+                "WHERE project_id = ? ORDER BY spec_id, spec_version, sequence",
+                project_id,
+                lambda row: (
+                    "spec-events/"
+                    f"{row['spec_id']}-v{row['spec_version']}-{row['sequence']}.json"
+                ),
             )
             self._add_table_entries(
                 entries,
@@ -1264,6 +1804,15 @@ class SQLiteEvidenceStore:
                 "WHERE project_id = ? ORDER BY evidence_id",
                 project_id,
                 lambda row: f"evidence/{row['evidence_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._cost_evaluation_from_row,
+                "SELECT * FROM cost_evaluations "
+                "WHERE project_id = ? ORDER BY evaluated_at, evidence_id",
+                project_id,
+                lambda row: f"cost/{row['evidence_id']}.json",
             )
         entries.sort(key=lambda entry: str(entry["path"]))
         manifest = [
@@ -1314,7 +1863,7 @@ class SQLiteEvidenceStore:
     ) -> None:
         path_pattern = (
             r"project\.json|"
-            r"(?:specs|revisions|approvals|preparations|runs|evidence)/"
+            r"(?:specs|spec-events|revisions|approvals|preparations|runs|evidence|cost)/"
             r"[A-Za-z0-9][A-Za-z0-9._:-]{0,160}\.json"
         )
         if re.fullmatch(path_pattern, path) is None:
@@ -1349,6 +1898,57 @@ class SQLiteEvidenceStore:
             and row["spec_hash"] == value.spec_hash
             and row["stored_at"] == _utc_text(value.stored_at),
             "spec row does not match its payload",
+        )
+        return value
+
+    def _approved_spec_from_rows(
+        self, approved_row: sqlite3.Row, draft_row: sqlite3.Row
+    ) -> StoredSpec:
+        draft = self._spec_from_row(draft_row)
+        approved = self._spec_from_row(approved_row)
+        self._require_approved_snapshot(draft, approved)
+        return approved
+
+    def _require_approved_snapshot(
+        self, draft: StoredSpec, approved: StoredSpec
+    ) -> None:
+        expected = draft.spec.model_copy(
+            update={
+                "status": SpecStatus.APPROVED,
+                "approved_at": approved.spec.approved_at,
+            }
+        )
+        self._require_binding(
+            draft.spec.status is SpecStatus.DRAFT
+            and draft.project_id == approved.project_id
+            and draft.spec_id == approved.spec_id
+            and draft.spec_version == approved.spec_version
+            and expected == approved.spec,
+            "approved spec does not preserve its immutable draft",
+        )
+
+    def _spec_event_from_row(self, row: sqlite3.Row) -> SpecStateEvent:
+        value = self._decode(SpecStateEvent, row["payload_json"])
+        self._require_binding(
+            row["event_id"] == value.event_id
+            and row["project_id"] == value.project_id
+            and row["spec_id"] == value.spec_id
+            and int(row["spec_version"]) == value.spec_version
+            and int(row["sequence"]) == value.sequence
+            and row["status"] == value.status.value
+            and row["occurred_at"] == _utc_text(value.occurred_at),
+            "spec event row does not match its payload",
+        )
+        return value
+
+    def _cost_evaluation_from_row(self, row: sqlite3.Row) -> StoredCostEvaluation:
+        value = self._decode(StoredCostEvaluation, row["payload_json"])
+        self._require_binding(
+            row["evidence_id"] == value.evidence_id
+            and row["project_id"] == value.project_id
+            and row["revision_id"] == value.revision_id
+            and row["evaluated_at"] == _utc_text(value.evaluated_at),
+            "cost evaluation row does not match its payload",
         )
         return value
 

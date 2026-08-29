@@ -1,77 +1,60 @@
-# Project FORGE — 연결형 엔지니어링 공동설계 AI PRD v3
+# Project FORGE — 엔지니어링 변경관리 AI PRD v4
 
-- 작성일: 2026-08-27
-- 상태: 개발 착수 기준선
+- 작성일: 2026-08-29
+- 상태: 변경관리 제품 기준선
 - 문서 소유자: 프로젝트 오너
 - 구현 기준: 이 문서와 `AGENTS.md`
-- 대체 문서: PRD v1, PRD v2와 기존 테니스공 발사기 프로토타입
+- 대체 문서: PRD v1~v3와 기존 범용 공동설계 포지셔닝
 
 ## 1. 이번 버전에서 확정한 결정
 
-1. 장기 비전은 여러 물리 도메인을 지원하는 범용 엔지니어링 플랫폼으로 유지한다.
-2. 첫 출시 범위는 범용 플랫폼 전체가 아니라 **냉각 팬 장착 브래킷의 정역학 검증 수직 절편**으로 제한한다.
-3. 첫 출시에서는 Explorer 모드만 제공한다. Prototype과 Product 모드는 품질 게이트를 통과한 뒤 별도 출시한다.
-4. AI는 인터뷰, 명세 초안, 설명을 담당한다. 수치 결과와 판정은 버전이 고정된 결정론적 코드에서만 생성한다.
-5. 명세 승인 전에는 실제 계산을 실행하지 않는다.
-6. 판정은 요구조건별 `PASS`, `FAIL`, `INDETERMINATE` 중 하나다.
-7. `FAIL` 판정과 개선안 생성은 분리한다. 개선안을 계산하지 못해도 실패 판정은 가능하다.
-8. 로그인 없는 로컬 우선 제품으로 시작하며 서버는 loopback 주소에만 바인딩한다.
-9. 기존 도메인 특화 프로토타입 코드는 새 아키텍처에 이식하지 않는다.
-10. 첫 코드 마일스톤은 데이터 계약, 결정론적 가짜 플러그인, 저장·재실행, 검증 게이트까지다.
-11. Web은 Next.js TypeScript, API와 Worker는 Python FastAPI 기반으로 시작한다.
-12. Pydantic 모델을 스키마의 단일 원본으로 사용하고 JSON Schema와 TypeScript 타입을 생성한다.
-13. R0 저장소는 SQLite와 프로젝트 폴더를 사용하며 외부 큐·Redis·컨테이너 실행은 도입하지 않는다.
-14. 런타임과 패키지 버전은 R0 첫 커밋에서 고정하고 잠금 파일을 커밋한다.
-15. 장기 비전은 **기계·전기·소프트웨어·비용·실물 시험을 하나의 버전된 시스템 설계로 묶는 연결형 엔지니어링 공동설계 플랫폼**으로 확장한다.
-16. R0/R1의 범위와 게이트는 유지한다. 연결 장치 기능을 넣기 위해 검증 기반을 건너뛰지 않는다.
-17. 연결 기능은 임의 장치 자동 인식이 아니라 서명되고 허용 목록에 등록된 `DeviceProfile`만 지원한다.
-18. 단일 통신 규격을 강제하지 않는다. Local Device Gateway가 OPC UA, ROS 2, 제조사 SDK, USB/Serial/CAN, MQTT Sparkplug 등의 어댑터를 장치별로 선택한다.
-19. AI는 설계·코드·시험 계획 후보만 제안한다. 비용, 전기 규칙, 빌드, 배포, 장치 명령과 성숙도 판정은 결정론적 코드만 생성한다.
-20. AI는 프로토콜 바이트, raw GPIO/CAN ID, OPC UA write, ROS publish 또는 펌웨어 설치 API를 직접 호출할 수 없다.
-21. 제품 완성도는 `specified → analyzed → buildable → bench_verified → commissioned`로 표시하며 단계를 건너뛸 수 없다.
-22. 연결 성공, 계산 `PASS`, `commissioned`는 안전 인증이나 양산 승인을 의미하지 않는다.
-23. 장치의 위험 제한과 통신 손실 대응은 로컬 결정론적 제어기가 담당하고, 치명 위험 차단은 FORGE와 독립된 E-stop·인터록·안전회로가 담당한다.
-24. 첫 연결 수직 절편은 가드·E-stop·watchdog을 갖춘 12 V 냉각 팬 시험 지그 하나로 제한한다. 이동 로봇, 고전압, 배터리 충전, OTA와 클라우드 원격제어는 별도 PRD 전까지 제외한다.
+1. FORGE는 **로봇·임베디드 제품의 엔지니어링 변경관리와 출시 검증**에 집중한다. 범용 AI 엔지니어나 CAD 생성기가 아니다.
+2. CAD는 형상·도면, PLM은 승인 revision·BOM, Git은 source revision, CI는 build·시험 실행 결과를 계속 소유한다.
+3. FORGE는 원본 시스템을 대체하거나 수정하지 않고 읽기 전용 snapshot을 연결하는 검증 계층이다.
+4. hardware revision 변경을 기준 사건으로 삼아 firmware, BOM, test, protocol, documentation의 영향을 추적한다.
+5. pin·전압·단위·명령 범위·protocol schema의 불일치는 결정론적 규칙으로 검증한다.
+6. BOM 가격은 공급자·출처·조회 시점·유효기간·통화·MOQ·배송·세금 범위를 함께 저장해야 한다.
+7. firmware build와 시험 결과는 실행한 Git/CI revision, toolchain, artifact hash와 함께 수집한다.
+8. `simulation`, `bench`, `HIL`, `physical_device` 증거는 명시적으로 구분하며 낮거나 다른 tier의 증거로 대체하지 않는다.
+9. 변경된 artifact와 dependency graph에 따라 필수 재시험을 자동 지정한다. 의존성이 불명확하면 보수적으로 재시험한다.
+10. 출시 판정은 `READY` 또는 `BLOCKED`이며 모든 차단 사유와 사용한 증거를 기계 판독 가능하게 보고한다.
+11. `READY`는 정의된 release policy를 충족했다는 뜻일 뿐 안전 인증·법규 적합성·양산 승인을 뜻하지 않는다.
+12. AI는 변경 요약·의심 불일치·설명 초안을 제안할 수 있지만, 검증 결과·재시험·출시 판정은 버전이 고정된 정책과 코드가 생성한다.
+13. 로그인 없는 로컬 우선 제품으로 시작하며 외부 시스템 connector는 최소 권한·읽기 전용을 기본값으로 한다.
+14. Pydantic 모델을 스키마의 단일 원본으로 사용하고 불변 snapshot과 append-only 판정 이력을 SQLite에 저장한다.
+15. 첫 수직 절편은 한 로봇/임베디드 reference project에서 hardware revision 변경부터 출시 보고서까지 재현한다.
 
 ## 2. 문제 정의
 
-초기 제품 개발자는 자연어 아이디어를 공학적으로 검토하려면 요구조건 정리, 단위 변환, 공식 선택, 계산, 가정 기록, 결과 판정을 여러 도구에서 수작업으로 연결해야 한다. 이 과정에서는 다음 문제가 반복된다.
+로봇·임베디드 팀은 CAD/EDA export, PLM/BOM, Git repository, CI, 시험 장비와 문서를 각각 운영한다. 그러나 hardware revision이 바뀌었을 때 어느 firmware·시험·protocol·문서를 다시 검증해야 하는지 한 시스템이 책임지지 않는다. 이 과정에서는 다음 문제가 반복된다.
 
-- 필요한 입력이 빠진 상태로 계산을 시작한다.
-- 가정과 사용자 입력이 섞여 출처를 추적하기 어렵다.
-- 단위 또는 차원 오류가 뒤늦게 발견된다.
-- 계산 결과가 어떤 요구조건을 검증하는지 연결되지 않는다.
-- AI가 만든 설명과 실제 계산 결과의 경계가 불명확하다.
-- 같은 입력으로 결과를 재현하기 어렵다.
 - 기계 형상, 전기 연결, 핀 할당, 펌웨어와 BOM이 서로 다른 문서에서 변경되어 revision 불일치가 발생한다.
 - 설계가 예산을 만족한다는 주장에 가격 출처, 통화, 시점과 배송·세금 범위가 빠져 재현되지 않는다.
 - 하드웨어 변경 뒤 이전 펌웨어가 잘못된 핀·전압·통신 계약으로 설치될 수 있다.
 - 시뮬레이션 통과와 실제 장치 시험 통과가 같은 "완성"으로 오해된다.
-- 일반 AI가 만든 코드와 명령이 검증 없이 물리 장치에 전달될 수 있다.
+- 변경 영향이 누락되어 필요한 bench/HIL/실장 시험이 실행되지 않는다.
+- build·시험 로그가 출시 대상 hardware/firmware revision과 결합되지 않는다.
+- 출시 회의에서 사람이 여러 도구의 화면을 모아 근거를 재구성해야 한다.
 
-FORGE는 자연어 입력을 검토 가능한 시스템 명세로 바꾸고, 승인된 명세만 결정론적 계산·비용·빌드·장치 도구에 전달하며, 실제 확보된 증거 범위까지만 완성도를 표시한다.
+FORGE는 원본 도구의 승인·실행 권한을 가져오지 않는다. 각 도구의 불변 snapshot과 증거를 정규화하고, 변경 영향·불일치·필수 재시험을 계산한 뒤 현재 출시 후보가 `READY`인지 `BLOCKED`인지 근거와 함께 판정한다.
 
 ## 3. 초기 사용자와 핵심 작업
 
 ### 3.1 초기 사용자
 
-개인 메이커, 로보틱스 개발자, 초기 하드웨어 팀에서 개념 설계를 검토하는 사용자다. 사용자는 기본적인 기계 설계 용어는 이해하지만 CAE 전문가일 필요는 없다.
+5~100명 규모 로봇·임베디드 제품 팀의 release engineer, systems lead, hardware/firmware lead, validation lead가 초기 사용자다. 여러 저장소와 시험 환경 사이의 revision 일치 여부를 수작업으로 확인하는 팀을 우선한다.
 
 ### 3.2 핵심 작업
 
-> 간단한 기계 부품 아이디어를 입력하고, 누락 조건을 보완한 뒤, 단위가 검증된 계산과 요구조건별 판정 및 근거를 받는다.
-
-연결 트랙의 후속 핵심 작업은 다음과 같다.
-
-> 지원되는 장치 프로필을 선택하고 기계·전기·제어·예산 조건을 승인한 뒤, 서로 일치하는 펌웨어·시험 패키지와 실물 검증 증거를 받는다.
+> 새 hardware revision을 선택하면 영향받은 firmware·BOM·시험·protocol·문서를 확인하고, 자동 지정된 재시험과 수집된 증거를 검토한 뒤 근거가 완전한 출시 가능·불가능 판정을 받는다.
 
 ### 3.3 사용자 성공 지표
 
-- 대상 사용자와 일치하는 최소 10명의 통제된 사용성 테스트에서 80% 이상이 도움 없이 20분 안에 예제 프로젝트를 완료한다.
-- 예제 프로젝트에서 필수 입력 누락 상태로 계산이 실행되는 비율은 0%다.
-- 골든 케이스의 판정과 기준 결과가 정해진 허용오차 안에서 100% 일치한다.
-- 결과 화면에서 입력, 공식, 계산값, 판정 근거를 3번 이하의 동작으로 확인할 수 있다.
-- 승인된 동일 명세와 동일 엔진 버전으로 재실행했을 때 결과가 정의된 수치 허용오차 안에서 일치한다.
+- 골든 revision 변경 corpus에서 영향받은 artifact와 필수 재시험 누락률은 0%다.
+- pin·전압·단위·명령 범위·protocol schema 불일치를 100% 탐지한다.
+- `READY` 판정에 필요한 build·시험·BOM 증거가 하나라도 없거나 만료되면 100% `BLOCKED`다.
+- 같은 source snapshot, policy version과 evidence set으로 판정을 재실행하면 byte-stable canonical report를 생성한다.
+- 사용자는 각 차단 사유에서 원본 revision·검증 규칙·필수 재시험·결과까지 3번 이하의 동작으로 추적할 수 있다.
 
 ## 4. 제품 원칙
 
@@ -176,76 +159,73 @@ AI가 할 수 없는 일:
 ### 5.1 포함
 
 - 로그인 없는 로컬 프로젝트 생성
-- 자연어 요구사항 입력
-- 누락된 필수 입력 질문
-- 원문, 구조화 명세 초안, 가정의 구분 표시
-- 사용자 수정 및 명세 버전 승인
-- 모든 물리량의 값·단위·출처 저장
-- 단위와 차원 검증
-- 냉각 팬 장착 브래킷의 단순 정역학 해석식 플러그인
-- 최대 응력, 끝단 변위, 안전계수 계산
-- 요구조건별 3상태 판정
-- 입력·공식·결과·판정이 연결된 증거 화면
-- JSON 실행 manifest와 간단한 HTML 보고서 내보내기
-- AI를 끈 상태에서 승인된 명세 재실행
+- CAD/EDA·PLM export, Git commit, CI result의 읽기 전용 snapshot 수집
+- hardware revision 간 artifact 변경 탐지
+- hardware, firmware, BOM, test, protocol, documentation 변경 영향 graph
+- pin·전압·단위·명령 범위·protocol schema 결정론적 검증
+- BOM quote 출처·조회 시점·유효기간·통화·MOQ·비용 범위 검증
+- firmware build와 시험 결과의 source revision·artifact hash 결합
+- simulation·bench·HIL·physical-device 증거 tier 구분
+- 변경 artifact별 필수 재시험 자동 지정과 상태 추적
+- `READY`/`BLOCKED` 판정, 차단 사유와 evidence graph
+- JSON manifest와 간단한 HTML release-readiness report 내보내기
+- AI를 끈 상태에서 동일 snapshot·policy·evidence 판정 재실행
 - 프로젝트 복제, 내보내기, 삭제
 - 내보낸 프로젝트 가져오기
 
 ### 5.2 제외
 
-- FEA, CFD, 열·유체 결합, 진동, 피로, 전기, 전자기
-- 자동 최적화
-- STEP/STL/DXF 생성과 3D CAD 뷰어
+- CAD/EDA 편집·생성, PLM 승인 workflow와 Git/CI 대체
+- 외부 원본 artifact 수정 또는 자동 merge
+- 범용 engineering code 생성과 자동 설계 최적화
+- 실제 장치 제어, firmware flash와 무인 배포
 - 음성 입력
 - 사용자 계정, 팀 협업, 클라우드 동기화
-- 공급처 연동 및 검증된 가격
-- Prototype/Product 모드
 - 인증, 규격 적합성 또는 제조 승인
 - 외부 플러그인 설치와 임의 코드 실행
 
-이 제외 범위는 R0/R1에 적용된다. 연결 기능은 별도 선행조건과 안전 게이트를 통과한 first-party reference profile에 한해 R6부터 제공한다.
+이 제외 범위는 제품 경계다. FORGE connector는 원본 시스템의 소유권과 승인 체계를 보존하며, write-back이 필요하면 별도 PRD·권한 모델·감사 게이트를 통과해야 한다.
 
 ### 5.3 금지 또는 경고 대상
 
 의료, 항공, 자동차 안전 핵심부품, 압력용기, 승강·인양, 인명 보호 장치, 무기 및 법규상 전문가 승인이 필요한 용도는 첫 출시의 지원 대상이 아니다. 입력에서 이러한 용도가 감지되면 계산을 중단하고 제한을 명시한다.
 
-## 6. 대표 수직 시나리오
+## 6. 대표 변경관리 수직 시나리오
 
-사용자 입력:
+release engineer가 PLM의 controller board revision을 `HW-11`에서 `HW-12`로 올린다. 새 revision에서는 fan-enable pin, sensor supply voltage와 protocol command range가 바뀌었다.
 
-> 120 mm 냉각 팬을 책상 아래에 고정할 브래킷을 만들고 싶다. 처지지 않고 안전해야 한다.
+FORGE는 다음 source snapshot을 연결한다.
 
-시스템은 다음 필수 항목을 확인한다.
+- CAD/EDA export와 PLM revision/BOM
+- Git firmware commit과 pin map/protocol schema
+- CI build, simulation, bench, HIL 결과
+- physical-device 시험 log와 calibration metadata
+- assembly, pinout, service documentation
 
-- 브래킷 모델: 직사각형 단면 외팔보
-- 길이, 폭, 두께
-- 팬과 체결부를 포함한 등가 하중
-- 하중 방향과 적용 위치
-- 재료 또는 사용자 제공 탄성계수·항복강도
-- 허용 최대 변위
-- 최소 안전계수
-- 온도 등 단순 모델을 벗어나는 조건 유무
+변경 비교 결과는 firmware GPIO mapping, electrical rules, protocol conformance test, HIL fixture configuration, BOM quote와 pinout 문서를 영향 대상으로 지정한다. 각 영향에는 changed artifact와 rule ID를 포함한 근거가 있어야 한다.
 
-승인된 명세로 다음을 수행한다.
+시스템은 다음을 수행한다.
 
-1. 단위를 SI로 정규화한다.
-2. 모델 적용 전제조건을 검사한다.
-3. 직사각형 단면 2차 모멘트를 계산한다.
-4. 외팔보 끝단 집중하중 모델로 최대 굽힘응력과 끝단 변위를 계산한다.
-5. 응력, 변위, 안전계수 요구조건을 각각 판정한다.
-6. 입력, 공식 ID·버전, 중간값, 결과, 판정 근거를 보고한다.
+1. pin·전압·단위·명령 범위·protocol schema 불일치를 검사한다.
+2. 변경 영향 graph와 release policy로 필요한 build·retest를 지정한다.
+3. CI와 시험 시스템에서 revision-bound result를 수집한다.
+4. simulation, bench, HIL, physical-device evidence를 별도 tier로 검증한다.
+5. 최신성과 provenance가 완전한 BOM quote를 확인한다.
+6. 누락·실패·불일치가 있으면 `BLOCKED`, 모두 충족하면 `READY`로 판정한다.
+7. 모든 판단을 source revision, evidence hash, policy version과 함께 보고한다.
 
-다음 경우 전체 결과는 `INDETERMINATE`다.
+다음 경우 출시는 `BLOCKED`다.
 
-- 필수 입력이 빠짐
-- 하중이나 형상이 플러그인 적용 범위를 벗어남
-- 단위 또는 차원이 잘못됨
-- 재료 데이터 출처가 없거나 유효 범위를 벗어남
-- 계산 중 유한하지 않은 값이 발생함
+- hardware revision과 firmware build target이 다름
+- required retest가 누락·실패·만료됨
+- HIL이 필요한 요구조건에 simulation 결과만 존재함
+- quote 출처·조회 시점 또는 비용 범위가 불완전함
+- pin·전압·단위·명령 범위·schema 불일치가 열려 있음
+- evidence dependency나 provenance를 해석할 수 없음
 
-### 6.1 후속 연결 수직 시나리오
+### 6.1 물리 시험 경계
 
-R6의 첫 대상은 기존 브래킷을 확장한 **가드가 있는 12 V 120 mm 냉각 팬 시험 지그**다.
+첫 reference fixture는 가드가 있는 12 V 120 mm 냉각 팬 시험 지그다. 목적은 장치를 자동 설계·제어하는 것이 아니라, 동일 revision에 대해 bench/HIL/physical-device evidence가 어떻게 구분·수집·무효화되는지 검증하는 것이다.
 
 - 승인된 fan, controller board, sensor, driver와 전원 모듈 각각 1종
 - 구조 검증, 전기 규칙, 정적 BOM 가격 snapshot, firmware build와 시험 manifest
@@ -257,18 +237,18 @@ R6의 첫 대상은 기존 브래킷을 확장한 **가드가 있는 12 V 120 mm
 
 첫 단계에서는 custom PCB, raw packet/GPIO, 로봇 관절, 자율 동작, OTA, cloud command와 둘 이상의 장치 동시 제어를 지원하지 않는다.
 
-## 7. 사용자 흐름
+## 7. 변경관리 사용자 흐름
 
-1. 사용자가 새 로컬 프로젝트를 만든다.
-2. 자연어 설명을 입력한다.
-3. 시스템이 현재 이해한 목적과 누락 항목을 보여준다.
-4. 시스템은 판정에 가장 큰 영향을 주는 질문부터 한 번에 최대 3개 제시한다.
-5. 사용자가 답하면 명세 초안과 가정 목록을 갱신한다.
-6. 사용자는 원문, 답변 이력, 명세 초안, 가정을 비교해 수정한다.
-7. 사용자가 명세 버전을 승인한다.
-8. 시스템이 검증된 분석 계획을 표시하고 실행한다.
-9. 사용자는 전체 판정과 요구조건별 증거를 본다.
-10. 사용자는 보고서와 manifest를 내보내거나 명세를 복제해 수정한다.
+1. 사용자가 로봇·임베디드 프로젝트와 읽기 전용 source connector를 등록한다.
+2. FORGE가 기준 hardware revision과 관련 artifact snapshot을 고정한다.
+3. 새 hardware revision이 감지되면 이전 snapshot과 비교한다.
+4. 시스템이 artifact별 변경, 영향 도메인, 불일치와 근거를 표시한다.
+5. release policy가 필요한 firmware build와 재시험을 자동 지정한다.
+6. CI·시험 결과를 수집하고 tier·revision·fixture/device·hash를 검증한다.
+7. 사용자는 누락·실패·만료·revision mismatch를 해결한다.
+8. 시스템이 `READY` 또는 `BLOCKED`와 정확한 blocker code를 산출한다.
+9. 사용자는 evidence graph와 release-readiness report를 검토·내보낸다.
+10. 다음 revision은 이전 판정을 수정하지 않고 새 snapshot과 report를 만든다.
 
 저장 정책:
 
@@ -754,78 +734,79 @@ R6 전에는 구현하지 않는다. Discovery와 장치 명령은 항상 사용
 
 기간보다 게이트 통과를 우선한다.
 
-### R0 — 재현 가능한 기반
+### R0 — 재현 가능한 변경관리 기반
 
 산출물:
 
 - 모노레포와 한 번의 로컬 개발 명령
-- 버전된 핵심 스키마
-- 프로젝트·명세 버전·실행 상태 저장
-- 결정론적 가짜 플러그인
-- 3상태 판정과 증거 연결
+- 버전된 source snapshot·변경 영향·증거·출시 판정 스키마
+- 불변 revision과 append-only 판정 이력 저장
+- 결정론적 fake connector와 release policy
+- `READY`/`BLOCKED` 판정과 evidence graph
 - 최소 웹 흐름
 
 완료 게이트:
 
-- AI 없이 예제 명세를 저장·승인·실행·재실행할 수 있다.
-- 필수 입력 누락은 실행되지 않는다.
+- AI 없이 예제 revision 변경을 저장·분석·판정·재실행할 수 있다.
+- 필수 source/evidence 누락은 `READY`가 될 수 없다.
 - 타입 검사, lint, 단위·통합 테스트가 한 명령으로 통과한다.
 - API가 loopback에만 바인딩되고 기본 보안 테스트를 통과한다.
 
-### R1 — 브래킷 Explorer
+### R1 — Hardware Revision Release Gate
 
 산출물:
 
-- 요구사항 인터뷰와 명세 컴파일러
-- 단위·차원 코어
-- 브래킷 해석식 플러그인
-- 재료 데이터 최소 세트와 출처
-- 골든 케이스와 증거 보고서
+- 파일 기반 CAD/EDA·PLM export, 로컬 Git, CI result connector
+- hardware revision diff와 cross-artifact impact engine
+- pin·전압·단위·명령 범위·protocol schema validator
+- 변경 항목별 required-retest policy
+- BOM provenance와 firmware build/test evidence 수집
+- release-readiness report와 골든 revision corpus
 
 완료 게이트:
 
-- R1 착수 전에 클라우드 또는 로컬 LLM 정책, 전송 데이터, 보존 정책과 provider adapter 경계를 결정한다.
-- 대표 시나리오를 처음부터 끝까지 완료할 수 있다.
-- 브래킷 플러그인의 정량 품질 기준을 모두 통과한다.
-- AI 경계와 위험 입력 벤치마크를 모두 통과한다.
-- AI를 끈 재실행이 가능하다.
-- 계산 적용 범위를 벗어난 입력은 명확히 거부된다.
+- 대표 hardware revision 변경을 snapshot부터 release report까지 완료할 수 있다.
+- 영향·불일치·필수 재시험 골든 corpus에서 false-negative가 0건이다.
+- simulation·bench·HIL·physical-device evidence가 서로 대체되지 않는다.
+- source revision이 다른 build/test 결과는 `READY`에 사용되지 않는다.
+- AI를 끈 동일 입력 재판정이 재현 가능하다.
+- 모든 connector는 read-only contract와 최소 권한 검사를 통과한다.
 
-### R2 — 구조해석 교차검증
+### R2 — Team Integrations
 
-선행 조건: R1의 골든 케이스와 데이터 계약이 안정화됨.
+선행 조건: R1의 골든 변경 영향과 판정 계약이 안정화됨.
 
-- CalculiX 등 외부 구조 솔버 어댑터
-- 격리 실행, 진행률, 취소, 시간·자원 제한
-- 메시 품질과 수렴 기록
-- 해석식과 수치해석 교차검증
+- production Git provider와 CI adapter
+- PLM/CAD metadata adapter와 webhook/polling 변경 감지
+- connector health, credential scope와 source freshness
+- team approval, waiver, audit export
 
-### R3 — 파라메트릭 CAD
+### R3 — Evidence Integrity
 
-선행 조건: 분석 형상 계약과 해시 규칙 확정.
+선행 조건: connector identity와 artifact hash 규칙 확정.
 
-- 브래킷 파라메트릭 CAD
-- STEP/STL 내보내기
-- 닫힌 솔리드, 치수, 재가져오기 검사
-- CAD·해석 형상·BOM 일관성 검사
+- signed build/test artifact와 raw log hash
+- fixture·instrument identity와 calibration freshness
+- evidence retention, revocation와 tamper detection
+- historical release decision replay
 
-### R4 — 냉각 팬 모듈 통합
+### R4 — Policy and Coverage Expansion
 
-선행 조건: 구조·CAD 개별 게이트 통과.
+선행 조건: R1~R3의 revision·evidence gate 통과.
 
-- 회전체, 진동, 열, 유동을 순차 추가
-- 도메인별 독립 골든 케이스
-- 전체 팬 모듈을 통합 검증 시나리오로 사용
+- board·sensor·actuator별 change rule catalog
+- 부품 대체의 전기·기계·열·protocol 동등성 검증
+- 프로젝트별 release policy와 conservative default
+- change rule coverage·false-negative 회귀 suite
 
-### R5 — Prototype 정책
+### R5 — Enterprise Release Governance
 
-- 수치해석 교차검증
-- 민감도, 허용오차, 불확실성 기록
-- 버전 잠금과 리뷰 상태
+- SSO/RBAC와 reviewer identity
+- policy version 잠금, waiver expiry와 separation of duties
+- 사설 배포, 감사 log와 retention control
+- portfolio-level release risk와 connector 운영 지표
 
-Product 모드는 인증·책임·검토자 신원과 감사 모델을 별도 PRD로 정의하기 전에는 개발하지 않는다.
-
-### R5C — Connected Foundation
+### R5C — Physical Evidence Foundation
 
 - 전압·전류·핀·logic level을 검증하는 ElectricalRulePlugin 골든 케이스
 - 서명·폐기·capability를 포함한 DeviceProfile schema와 conformance fixture
@@ -835,64 +816,63 @@ Product 모드는 인증·책임·검토자 신원과 감사 모델을 별도 PR
 
 R5C의 모든 계약 테스트와 위험 검토가 통과해야 R6의 실제 장치 코드를 작성할 수 있다.
 
-### R6 — Connected Reference Prototype
+### R6 — Connected Evidence Reference
 
 선행 조건:
 
-- R1 데이터·판정·증거 계약 안정화
-- R3의 CAD/BOM revision과 hash 계약 통과
+- R1 변경 영향·판정·증거 계약 안정화
+- R3의 artifact/evidence identity 계약 통과
 - 전기 규칙, DeviceProfile과 software build의 독립 골든 케이스 통과
 - Prototype 안전 정책과 시험 fixture 승인
 
 산출물:
 
-- 가드가 있는 12 V 냉각 팬 시험 지그와 first-party profile 1종
+- 가드가 있는 12 V 냉각 팬 시험 지그와 first-party evidence profile 1종
 - 전기·핀·통신·제어·safe-state 계약
 - 정적 quote snapshot을 사용한 BOM 예산 판정
 - 잠긴 first-party software template, build와 SIL
-- Local Device Gateway, USB commissioning·flash, 장치 native runtime adapter
-- HIL와 commissioning evidence manifest
+- 읽기 전용 Local Evidence Gateway와 장치 native result adapter
+- bench·HIL·physical-device evidence manifest
 
 완료 게이트:
 
-- 승인 설계부터 bench evidence까지 동일 revision으로 재현
-- firmware/design/profile 불일치 배포와 명령 100% 차단
+- 승인 revision부터 physical evidence까지 동일 revision으로 재현
+- firmware/design/profile 불일치를 출시 판정에서 100% 차단
 - 구조·전기·예산·software·장치 시험 요구조건이 단일 evidence graph에 연결
 - E-stop, guard open, 통신 단절, reset과 malformed packet에서 safe-state 검증
 - 지원 profile 밖 장치는 `unsupported` 또는 read-only
-- AI가 raw transport, 임의 code 또는 장치 command를 직접 실행하는 경로 0건
+- FORGE가 raw transport, 임의 code 또는 장치 command를 실행하는 경로 0건
 
-### R7 — 제한된 다목적 공동설계
+### R7 — Validated Connector Catalog
 
-- 지원 board·sensor·actuator와 산업/로봇 adapter의 검증된 catalog 확대
-- 유한 후보 집합의 Pareto 비용·성능 평가
-- 사용자 승인 대체 부품과 revision 영향 분석
-- 서로 다른 연결 방식의 reference vertical slice 최소 2개 추가
-- custom hardware, OTA, 이동 로봇과 cloud remote operation은 포함하지 않음
+- 지원 PLM·CAD/EDA·Git·CI·test system adapter catalog 확대
+- adapter conformance suite와 schema migration
+- 사용자 승인 대체 부품과 revision 영향 rule 확대
+- 서로 다른 robotics/embedded stack의 reference vertical slice 최소 2개 추가
+- connector write-back, 장치 제어와 자동 배포는 포함하지 않음
 
 ### R8 이후
 
-custom PCB, OTA, 이동 로봇, 배터리 시스템, 고전압, 사람 주변 자율 동작과 cloud remote operation은 각각 별도 위협 모델·안전 PRD·법적 검토·시험 장비가 있을 때만 추진한다.
+자동 write-back, firmware flash, OTA, 장치 command와 cloud remote operation은 각각 별도 위협 모델·권한 PRD·법적 검토가 있을 때만 추진한다. 이 기능들은 FORGE의 핵심 변경관리 제품에 필요하지 않다.
 
-## 19. 장기 도메인 확장 순서
+## 19. 장기 검증 범위 확장 순서
 
-1. 단위·차원과 공식 레지스트리
-2. 정역학·재료역학
-3. 회전체·동력전달
-4. 진동·피로
-5. 열
-6. 유체
-7. 전기·회로
-8. 제어
-9. 전자기, 광학, 음향
+1. hardware revision과 pin/electrical contract
+2. firmware build target과 protocol schema
+3. BOM quote provenance와 approved substitution
+4. simulation·bench·HIL·physical-device evidence
+5. calibration·fixture·device identity
+6. mechanical/thermal/EMC change rule catalog
+7. manufacturing test와 production configuration
+8. field issue·service bulletin과 release feedback
 
-새 도메인은 공통 계약을 구현하고 독립 골든 케이스, 적용 범위, 실패 모드, 라이선스 검토를 통과한 뒤 추가한다.
+새 검증 범위는 공통 계약을 구현하고 독립 골든 변경 corpus, 적용 범위, 실패 모드, connector 권한 검토를 통과한 뒤 추가한다.
 
 ## 20. 주요 위험과 대응
 
 | 위험 | 대응 |
 | --- | --- |
-| 범용 비전 때문에 첫 범위가 다시 커짐 | R0/R1 제외 기능은 코드에 넣지 않고 이슈로만 기록 |
+| 범용 AI 엔지니어로 범위가 다시 커짐 | 변경 감지·일관성 검증·재시험·출시 판정 밖 기능은 별도 제품 결정으로 격리 |
 | AI가 누락 값을 생성 | 필수 필드 정책, 가정 승인, 결정론적 실행 게이트 |
 | 공식 적용 범위 오류 | 기계 판독 가능한 precondition과 골든 케이스 |
 | 단위 혼동 | SI 내부 표현, 차원 타입, 경계 입력 변환 테스트 |
@@ -900,7 +880,7 @@ custom PCB, OTA, 이동 로봇, 배터리 시스템, 고전압, 사람 주변 �
 | 로컬 서버 노출 | loopback 바인딩, Origin/CSRF, 입력·경로 검증 |
 | 재현 불가 | 스키마·엔진·플러그인·데이터 버전과 입력 hash 저장 |
 | 외부 솔버 실행 위험 | R2 이후 격리 worker, 허용 목록, 자원·네트워크 제한 |
-| 제품 수준으로 오해 | Explorer 표시, 보고서 경고, Product 개발 별도 승인 |
+| `READY`를 인증·양산 승인으로 오해 | release policy 범위 표시, 보고서 경고, 인증 상태와 명시적 분리 |
 | 범용 장치 자동 인식 오해 | 서명된 profile allowlist와 명확한 `unsupported` 상태 |
 | hardware/software revision drift | 결합 design hash, build manifest와 실행 전 일치 검사 |
 | 가격을 확정 비용으로 오해 | quote snapshot, freshness, coverage, 범위와 예비비 판정 |
@@ -926,12 +906,12 @@ custom PCB, OTA, 이동 로봇, 배터리 시스템, 고전압, 사람 주변 �
 
 - 유료화 또는 실제 배포 대상 사용자의 우선순위
 - Windows/Linux 지원 순서와 배포 형식
-- R1 이후 추가 LLM provider와 로컬 모델 지원 순서
-- 외부 솔버 번들 여부와 라이선스 정책
+- 우선 지원할 PLM·CAD/EDA export·Git·CI 조합
+- connector credential 보관과 read-only scope 검증 방식
 - 원문·대화 보존 기간과 개인정보 삭제 정책
 - 골든 케이스를 승인할 공학 검토자
-- Product 모드의 상업·법적 제공 여부
-- 첫 유료 고객군과 reference controller·통신 stack
+- release report의 waiver·전자승인에 대한 상업·법적 경계
+- 첫 유료 고객군과 reference robotics/embedded stack
 - DeviceProfile 검토자, signing·폐기와 adapter 인증 정책
 - 예산의 기본 통화·지역·배송·세금·예비비와 가격 freshness 기간
 - first-party firmware toolchain, source 소유권과 라이선스
@@ -943,11 +923,11 @@ custom PCB, OTA, 이동 로봇, 배터리 시스템, 고전압, 사람 주변 �
 
 ### 22.1 종합 판단
 
-- 제한된 공동설계 코파일럿: **조건부 GO, 사업성 6/10, 기술 실현성 8/10**
-- 지원 profile을 여러 장치로 확대: 중기 실현성 6/10
-- 임의 기계·로봇의 자동 이해·프로그래밍·완성 보증: 현재 no-go, 실현성 2~3/10
+- 로봇·임베디드 변경관리 release gate: **GO 가설, 유료 design partner로 검증**
+- 검증된 connector와 change-rule catalog 확대: 단계적 추진
+- 임의 기계·로봇의 자동 설계·프로그래밍·완성 보증: 제품 범위 밖
 
-Autodesk, Siemens, Rockwell과 NVIDIA가 각각 설계 자동화, 산업 code 생성과 로봇 simulation을 제품화한 것은 인접 수요의 근거다. 그러나 FORGE의 차별화 가설인 **기계·전기·비용·software·실물 증거의 revision 결합**에 대한 직접 지불 의사는 파일럿으로 검증해야 한다. 시장 규모는 CAD, 산업 자동화, embedded DevOps와 robotics가 중복되므로 근거 없는 합산 TAM을 사용하지 않는다.
+FORGE의 차별화 가설은 새 설계 도구가 아니라 **hardware revision을 기준으로 firmware·BOM·시험·protocol·문서와 증거를 결합하는 검증 계층**이다. 변경 누락·재시험 누락·출시 회의 준비 시간을 실제로 줄이는지 유료 파일럿으로 검증한다. CAD, PLM, embedded DevOps와 robotics 시장을 근거 없이 합산한 TAM은 사용하지 않는다.
 
 ### 22.2 초기 고객과 구매 결과
 
@@ -957,21 +937,21 @@ Autodesk, Siemens, Rockwell과 NVIDIA가 각각 설계 자동화, 산업 code �
 
 - hardware revision 변경 때 분석·BOM·software·test를 함께 갱신
 - 핀, 단위, 명령 범위와 protocol schema 불일치 감소
-- 첫 동작 가능한 prototype과 진단 UI까지 걸리는 시간 단축
-- 비용·성능·제조성 선택 근거와 변경 영향 추적
-- 신규 인력 없이 검증 가능한 prototype 반복 횟수 증가
+- 필요한 재시험을 빠짐없이 지정하고 완료 상태 추적
+- simulation·bench·HIL·실제 장치 결과의 혼동 방지
+- 출시 회의용 증거 수집과 blocker 확인 시간 단축
 
 의료, 자동차, 안전 PLC, 협동로봇 안전기능과 문서 없는 legacy 장비 역공학은 초기 고객에서 제외한다.
 
 ### 22.3 수익 모델 가설
 
-1. `Explorer`: 로컬 단일 사용자와 reference example을 무료 또는 저가로 제공해 funnel과 신뢰를 만든다.
-2. `Design Partner Pilot`: 6~8주, 단일 장치·stack·목표에 대해 유료로 기준선 대비 시간·결함·증거를 측정한다.
-3. `Team Subscription`: 승인 profile, HIL orchestration, evidence export와 private deployment 기능을 workspace 구독으로 판매한다.
-4. `Adapter Onboarding`: 새 board·SDK·산업 protocol 통합은 고정 범위 별도 비용으로 받고 무제한 custom 지원을 구독에 포함하지 않는다.
+1. `Local Evaluation`: 단일 reference repository와 fixture data로 change-impact와 report를 평가한다.
+2. `Design Partner Pilot`: 6~8주, 한 제품 line의 실제 revision 변경에서 누락·재시험·release evidence 시간을 측정한다.
+3. `Team Subscription`: connector, policy, evidence export, approval audit와 private deployment를 workspace 구독으로 판매한다.
+4. `Connector Onboarding`: 새 PLM·CAD/EDA·CI·test system 통합은 고정 범위 별도 비용으로 받고 무제한 custom 지원을 구독에 포함하지 않는다.
 5. `Enterprise`: 사설 배포, SSO, 감사, 사내 package registry, signing key 분리와 SLA는 별도 계약한다.
 
-구체 가격은 검증 전 사실로 확정하지 않는다. 초기 인터뷰에서는 유료 파일럿 USD 10k 이상과 전환 후 월 USD 1k 이상을 지불 의사 가설로 시험한다. 일반 code assistant보다 높은 가격은 HIL, 장치 계약, revision 추적과 검증 증거가 실제로 재작업을 줄일 때만 정당화된다.
+구체 가격은 검증 전 사실로 확정하지 않는다. 초기 인터뷰에서는 유료 파일럿 USD 10k 이상과 전환 후 월 USD 1k 이상을 지불 의사 가설로 시험한다. 일반 code assistant보다 높은 가격은 revision 추적, 재시험 자동 지정과 검증 증거가 실제 출시 지연과 재작업을 줄일 때만 정당화된다.
 
 ### 22.4 90~120일 Go/No-go
 
@@ -981,13 +961,13 @@ GO 조건:
 - 최소 2곳이 파일럿 USD 10k 이상 또는 전환 후 월 USD 1k 이상 지불 의사 확인
 - 기준 프로젝트 대비 첫 검증 prototype 완료 시간 30% 이상 단축
 - hardware revision 변경 시 software·test·evidence 동시 갱신을 2개 프로젝트 이상에서 재현
-- 생성 산출물 build 성공률 100%, 실기기 전 필수 SIL/HIL gate 통과율 100%
+- 출시 후보 build 결과 수집률 100%, 필요한 bench/HIL/실장 gate 누락률 0%
 - 새 고객 온보딩 5영업일 이내, 공통 adapter code가 고객별 code보다 많음
 - 최소 한 고객이 두 번째 revision 또는 두 번째 프로젝트에 재사용
 
 No-go 또는 pivot 조건:
 
-- 핵심 가치가 일반 code 생성에 머물러 월 USD 100 이상 지불 의사가 없음
+- 핵심 가치가 기존 checklist/report 자동화 수준에 머물러 월 USD 100 이상 지불 의사가 없음
 - 첫 3개 고객이 모두 서로 다른 비공개 protocol과 2주 이상의 custom 통합 요구
 - 완료 시간 단축이 20% 미만이거나 검증 부담이 더 증가
 - HIL·승인 없이 자동 배포를 핵심 요구로 삼는 고객만 존재
@@ -996,25 +976,29 @@ No-go 또는 pivot 조건:
 
 ### 22.5 사업적 해자와 비용 위험
 
-해자는 LLM prompt가 아니라 검증된 DeviceProfile, revision 간 dependency graph, 재현 가능한 build·시험 evidence와 실제 실패 데이터다. 주요 원가는 device/SDK profile 유지, HIL 장비, 엔지니어 지원, simulation compute와 법적·보안 검토다. 커스텀 통합 비율과 지원 시간을 제품 지표로 관리하지 않으면 software 회사가 아니라 저마진 SI가 된다.
+해자는 LLM prompt가 아니라 검증된 connector, revision 간 dependency graph, change-rule corpus, 재현 가능한 build·시험 evidence와 실제 누락 데이터다. 주요 원가는 connector/schema 유지, 엔지니어 지원, 시험 evidence 통합과 보안 검토다. 커스텀 통합 비율과 지원 시간을 제품 지표로 관리하지 않으면 software 회사가 아니라 저마진 SI가 된다.
 
 ## 23. R0 구현 시작 조건
 
 R0 코딩은 다음 조건이 모두 충족되면 시작한다.
 
-- 이 PRD v3를 구현 기준선으로 사용한다. 변경은 문서 버전과 결정 기록을 함께 갱신한다.
+- 이 PRD v4를 구현 기준선으로 사용한다. 변경은 문서 버전과 결정 기록을 함께 갱신한다.
 - 저장소에 기존 프로토타입 코드가 남아 있지 않다.
 - Pydantic을 스키마 단일 원본으로 사용한다.
 - 첫 bootstrap 변경에서 Node LTS와 Python 안정 버전을 고정한다.
 - 루트 `verify` 한 명령으로 포맷 검사, lint, 타입 검사, 테스트, 보안 계약 검사를 실행한다.
 
-R0에서는 실제 구조 공식, CAD, 외부 솔버, 최적화를 구현하지 않는다. 먼저 가짜 플러그인으로 프로젝트 생성부터 증거 판정까지 전체 계약을 잠근다.
+R0에서는 CAD/PLM/Git/CI를 대체하거나 실제 장치를 제어하지 않는다. 먼저 fake connector로 revision snapshot부터 변경 영향·재시험·출시 판정까지 전체 계약을 잠근다.
 
 ## 24. 첫 구현 절편
 
-이번 v3와 함께 구현하는 범위는 R0의 **결정론적 계약 kernel**이다.
+이번 v4와 함께 구현하는 범위는 R0의 **결정론적 변경관리 계약 kernel**이다.
 
 - Pydantic 기반 versioned schema
+- 읽기 전용 외부 artifact snapshot과 source ownership
+- hardware revision change impact와 도메인별 근거
+- simulation·bench·HIL·physical-device evidence tier
+- 필수 재시험과 `READY`/`BLOCKED` release report
 - 승인되지 않은 명세 실행 차단
 - preflight 거부와 `INDETERMINATE` 근거
 - 결정론적 fake plugin
@@ -1026,7 +1010,7 @@ R0에서는 실제 구조 공식, CAD, 외부 솔버, 최적화를 구현하지 
 - 출처·시점·MOQ·배송·세금·예비비를 강제하는 `QuoteSnapshot`과 `CostEvaluation`
 - root `test`, `lint`, `typecheck`, `verify` 진입점
 
-실제 장치 discovery, firmware 생성·설치와 actuator 명령은 구현하지 않는다. 이 kernel의 불변성·증거 계약을 통과한 뒤에만 R6 연결 트랙을 착수한다.
+실제 장치 discovery, firmware 생성·설치와 actuator 명령은 구현하지 않는다. CAD·PLM·Git·CI 원본 수정도 하지 않는다. 이 kernel의 불변성·증거 계약을 통과한 뒤에만 production connector를 착수한다.
 
 ## 25. 외부 근거
 

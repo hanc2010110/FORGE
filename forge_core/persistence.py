@@ -8,6 +8,12 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from forge_core.constraints import (
+    BOMLine,
+    CostEvaluation,
+    QuoteSnapshot,
+    evaluate_cost,
+)
 from forge_core.design import SystemDesignRevision
 from forge_core.hashing import canonical_sha256
 from forge_core.models import (
@@ -19,6 +25,7 @@ from forge_core.models import (
     RunLifecycleStatus,
     RunStateEvent,
     RunStatus,
+    SpecStatus,
     Verdict,
     VerificationBundle,
 )
@@ -166,6 +173,71 @@ class StoredPreparation(ContractModel):
     def project_must_match_binding(self) -> StoredPreparation:
         if self.preparation.binding.project_id != self.project_id:
             raise ValueError("stored preparation must belong to its project")
+        return self
+
+
+class SpecStateEvent(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    event_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    spec_id: str = Field(min_length=1)
+    spec_version: int = Field(ge=1)
+    sequence: int = Field(ge=1, le=3)
+    previous_status: SpecStatus | None
+    status: SpecStatus
+    actor: str = Field(min_length=1)
+    reason_code: str = Field(min_length=1)
+    occurred_at: datetime
+
+    @field_validator("occurred_at")
+    @classmethod
+    def event_timestamp_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "occurred_at")
+
+    @model_validator(mode="after")
+    def validate_transition(self) -> SpecStateEvent:
+        expected = {
+            1: (None, SpecStatus.DRAFT),
+            2: (SpecStatus.DRAFT, SpecStatus.APPROVED),
+            3: (SpecStatus.APPROVED, SpecStatus.SUPERSEDED),
+        }
+        if (self.previous_status, self.status) != expected[self.sequence]:
+            raise ValueError("invalid immutable spec state transition")
+        return self
+
+
+class StoredCostEvaluation(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    project_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    bom_artifact_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    dependency_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    bom: tuple[BOMLine, ...]
+    quotes: tuple[QuoteSnapshot, ...]
+    evaluated_at: datetime
+    evaluation: CostEvaluation
+
+    @field_validator("evaluated_at")
+    @classmethod
+    def evaluated_timestamp_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "evaluated_at")
+
+    @model_validator(mode="after")
+    def provenance_must_reproduce_evaluation(self) -> StoredCostEvaluation:
+        for quote in self.quotes:
+            _require_utc(quote.observed_at, "quote observed_at")
+            _require_utc(quote.expires_at, "quote expires_at")
+        reproduced = evaluate_cost(
+            self.bom,
+            self.quotes,
+            currency=self.evaluation.currency,
+            budget_limit=self.evaluation.budget_limit,
+            reserve_rate=self.evaluation.reserve_rate,
+            evaluated_at=self.evaluated_at,
+        )
+        if reproduced != self.evaluation:
+            raise ValueError("stored quote provenance must reproduce cost evaluation")
         return self
 
 
@@ -323,6 +395,8 @@ __all__ = [
     "ProjectRecord",
     "RecordNotFoundError",
     "StorageBusyError",
+    "SpecStateEvent",
+    "StoredCostEvaluation",
     "StoredPreparation",
     "StoredRevision",
     "StoredRun",

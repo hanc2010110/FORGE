@@ -399,7 +399,10 @@ class RunStateEvent(ContractModel):
             raise ValueError("later run events require previous_status")
         allowed = {
             RunLifecycleStatus.PREPARED: {RunLifecycleStatus.QUEUED},
-            RunLifecycleStatus.QUEUED: {RunLifecycleStatus.RUNNING},
+            RunLifecycleStatus.QUEUED: {
+                RunLifecycleStatus.RUNNING,
+                RunLifecycleStatus.CANCELLED,
+            },
             RunLifecycleStatus.RUNNING: {
                 RunLifecycleStatus.SUCCEEDED,
                 RunLifecycleStatus.FAILED,

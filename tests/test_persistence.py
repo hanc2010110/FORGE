@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import unittest
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -19,7 +20,9 @@ from test_engine import (  # noqa: E402
     make_spec,
 )
 
+from forge_core.constraints import BOMLine, QuoteSnapshot, evaluate_cost  # noqa: E402
 from forge_core.design import (  # noqa: E402
+    ArtifactKind,
     EvidenceClass,
     EvidenceRecord,
     dependency_hash,
@@ -30,6 +33,7 @@ from forge_core.models import (  # noqa: E402
     EngineeringSpec,
     RunLifecycleStatus,
     RunStateEvent,
+    SpecStatus,
     Verdict,
     VerificationBundle,
 )
@@ -41,7 +45,9 @@ from forge_core.persistence import (  # noqa: E402
     MigrationError,
     ProjectRecord,
     RecordNotFoundError,
+    SpecStateEvent,
     StorageBusyError,
+    StoredCostEvaluation,
     StoredPreparation,
     StoredRevision,
     StoredRun,
@@ -154,15 +160,15 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
     def test_schema_initialization_pragmas_reopen_and_newer_rejection(self) -> None:
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
             self.assertEqual(
                 connection.execute("PRAGMA journal_mode").fetchone()[0], "wal"
             )
             self.assertEqual(
-                connection.execute("SELECT version FROM schema_migrations").fetchone()[
-                    0
-                ],
-                1,
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                2,
             )
         reopened = SQLiteEvidenceStore(self.path)
         reopened.create_project(self.project)
@@ -170,11 +176,34 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
         newer = Path(self.temporary.name) / "newer.db"
         with sqlite3.connect(newer) as connection:
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
         with self.assertRaises(MigrationError):
             SQLiteEvidenceStore(newer)
         with sqlite3.connect(newer) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+
+    def test_schema_v1_is_migrated_to_v2_without_losing_records(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE cost_evaluations")
+            connection.execute("DROP TABLE spec_state_events")
+            connection.execute("DROP TABLE approved_specs")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 2")
+            connection.execute("PRAGMA user_version = 1")
+
+        migrated = SQLiteEvidenceStore(self.path)
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        with sqlite3.connect(self.path) as connection:
             self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+        self.assertTrue(
+            {"approved_specs", "spec_state_events", "cost_evaluations"} <= tables
+        )
 
     def test_migration_history_corruption_is_rejected(self) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -227,6 +256,125 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             connection.execute("UPDATE specs SET payload_json = '{bad json'")
         with self.assertRaises(CorruptRecordError):
             self.store.get_spec("project-1", "spec-1", 1)
+
+    def test_immutable_spec_approval_and_lifecycle_round_trip(self) -> None:
+        self.store.create_project(self.project)
+        draft = self.spec.model_copy(
+            update={"status": SpecStatus.DRAFT, "approved_at": None}
+        )
+        stored_draft = self._stored_spec(draft)
+        version = self.store.store_spec(stored_draft, expected_project_version=1)
+        draft_event = SpecStateEvent(
+            event_id="spec-1-v1-draft",
+            project_id="project-1",
+            spec_id="spec-1",
+            spec_version=1,
+            sequence=1,
+            previous_status=None,
+            status=SpecStatus.DRAFT,
+            actor="test",
+            reason_code="created",
+            occurred_at=self.base,
+        )
+        version = self.store.append_spec_event(
+            draft_event, expected_project_version=version
+        )
+        approved = self._stored_spec()
+        version = self.store.store_approved_spec(
+            approved, expected_project_version=version
+        )
+        approved_event = SpecStateEvent(
+            event_id="spec-1-v1-approved",
+            project_id="project-1",
+            spec_id="spec-1",
+            spec_version=1,
+            sequence=2,
+            previous_status=SpecStatus.DRAFT,
+            status=SpecStatus.APPROVED,
+            actor="test",
+            reason_code="approved",
+            occurred_at=self.base,
+        )
+        version = self.store.append_spec_event(
+            approved_event, expected_project_version=version
+        )
+        version = self.store.store_approval(
+            self.spec_approval, expected_project_version=version
+        )
+        version = self.store.store_preparation(
+            StoredPreparation(
+                project_id="project-1",
+                preparation=self.prepared,
+                stored_at=self.base,
+            ),
+            expected_project_version=version,
+        )
+
+        self.assertEqual(
+            self.store.get_draft_spec("project-1", "spec-1", 1), stored_draft
+        )
+        self.assertEqual(
+            self.store.get_approved_spec("project-1", "spec-1", 1), approved
+        )
+        self.assertEqual(self.store.get_spec("project-1", "spec-1", 1), approved)
+        self.assertEqual(
+            self.store.list_spec_events("project-1", "spec-1", 1),
+            (draft_event, approved_event),
+        )
+        self.assertEqual(
+            self.store.get_preparation(self.prepared.preparation_id).preparation,
+            self.prepared,
+        )
+
+        next_draft = draft.model_copy(update={"spec_version": 2, "intent": "v2"})
+        version = self.store.store_spec(
+            StoredSpec(
+                project_id="project-1",
+                spec_id="spec-1",
+                spec_version=2,
+                spec_hash=canonical_sha256(next_draft),
+                spec=next_draft,
+                stored_at=self.base + timedelta(seconds=2),
+            ),
+            expected_project_version=version,
+        )
+        superseded = SpecStateEvent(
+            event_id="spec-1-v1-superseded",
+            project_id="project-1",
+            spec_id="spec-1",
+            spec_version=1,
+            sequence=3,
+            previous_status=SpecStatus.APPROVED,
+            status=SpecStatus.SUPERSEDED,
+            actor="test",
+            reason_code="new_revision",
+            occurred_at=self.base + timedelta(seconds=2),
+        )
+        self.store.append_spec_event(superseded, expected_project_version=version)
+        self.assertEqual(
+            self.store.list_spec_events("project-1", "spec-1", 1)[-1], superseded
+        )
+        self.assertEqual(
+            self.store.get_approved_spec("project-1", "spec-1", 1), approved
+        )
+
+        export = self.store.export_project("project-1").content
+        self.assertIn(b"specs/spec-1-v1-approved.json", export)
+        self.assertIn(b"spec-events/spec-1-v1-3.json", export)
+
+        with sqlite3.connect(self.path) as connection:
+            payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM specs WHERE spec_version = 1"
+                ).fetchone()[0]
+            )
+            payload["spec"]["intent"] = "tampered"
+            connection.execute(
+                "UPDATE specs SET payload_json = ? WHERE spec_version = 1",
+                (json.dumps(payload),),
+            )
+        with self.assertRaises(CorruptRecordError):
+            self.store.get_approved_spec("project-1", "spec-1", 1)
 
     def test_revision_approval_and_preparation_are_bound_and_immutable(self) -> None:
         self.store.create_project(self.project)
@@ -668,6 +816,16 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             evidence_refs=("run:run-1",),
             recorded_at=self.base,
         )
+        forged = evidence.model_copy(
+            update={
+                "evidence_id": "evidence-forged-dependency",
+                "dependency_hash": "sha256:" + "0" * 64,
+            }
+        )
+        with self.assertRaises(IntegrityConflictError):
+            self.store.store_evidence(
+                "project-1", forged, expected_project_version=version
+            )
         version = self.store.store_evidence(
             "project-1", evidence, expected_project_version=version
         )
@@ -679,6 +837,84 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertIn(
             b"evidence/evidence-1.json", self.store.export_project("project-1").content
         )
+
+    def test_cost_provenance_round_trip_reproduces_and_exports(self) -> None:
+        self.store.create_project(self.project)
+        revision = make_revision()
+        version = self.store.store_revision(
+            StoredRevision(
+                project_id="project-1",
+                revision_id=revision.revision_id,
+                revision_number=revision.revision_number,
+                revision_hash=canonical_sha256(revision),
+                revision=revision,
+                stored_at=self.base,
+            ),
+            expected_project_version=1,
+        )
+        evaluated_at = self.base + timedelta(days=1)
+        bom = (BOMLine(part_number="FAN-120", quantity=2),)
+        quotes = (
+            QuoteSnapshot(
+                quote_id="quote-1",
+                part_number="FAN-120",
+                supplier="supplier",
+                region="KR",
+                currency="USD",
+                unit_price=Decimal("10.00"),
+                minimum_quantity=1,
+                observed_at=self.base,
+                expires_at=self.base + timedelta(days=30),
+                shipping_included=False,
+                shipping_cost=Decimal("5.00"),
+                tax_included=False,
+                tax_cost=Decimal("2.00"),
+                source_url="https://supplier.example/FAN-120",
+                source_hash="sha256:" + "a" * 64,
+            ),
+        )
+        evaluation = evaluate_cost(
+            bom,
+            quotes,
+            currency="USD",
+            budget_limit=Decimal("30.00"),
+            reserve_rate=Decimal("0.10"),
+            evaluated_at=evaluated_at,
+        )
+        evidence = EvidenceRecord(
+            evidence_id="cost-1",
+            evidence_class=EvidenceClass.COST,
+            produced_for_revision_id=revision.revision_id,
+            dependency_hash=dependency_hash(revision, EvidenceClass.COST),
+            verdict=evaluation.verdict,
+            evidence_refs=("quote:quote-1", "source:sha256:" + "a" * 64),
+            recorded_at=evaluated_at,
+        )
+        version = self.store.store_evidence(
+            "project-1", evidence, expected_project_version=version
+        )
+        stored = StoredCostEvaluation(
+            project_id="project-1",
+            evidence_id=evidence.evidence_id,
+            revision_id=revision.revision_id,
+            bom_artifact_hash=revision.artifact_map()[ArtifactKind.BOM].content_hash,
+            dependency_hash=evidence.dependency_hash,
+            bom=bom,
+            quotes=quotes,
+            evaluated_at=evaluated_at,
+            evaluation=evaluation,
+        )
+        with self.assertRaises(IntegrityConflictError):
+            self.store.store_cost_evaluation(
+                stored.model_copy(update={"bom_artifact_hash": "sha256:" + "0" * 64}),
+                expected_project_version=version,
+            )
+        self.store.store_cost_evaluation(stored, expected_project_version=version)
+        self.assertEqual(self.store.get_cost_evaluation("cost-1"), stored)
+        self.assertEqual(self.store.list_cost_evaluations("project-1"), (stored,))
+        export = self.store.export_project("project-1").content
+        self.assertIn(b"cost/cost-1.json", export)
+        self.assertIn(b"https://supplier.example/FAN-120", export)
 
     def test_bounded_busy_retry_then_recovery(self) -> None:
         delays: list[float] = []

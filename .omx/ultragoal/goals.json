@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-28T12:58:06.167Z",
+  "updatedAt": "2026-08-29T02:16:24.142Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -47,38 +47,100 @@
       "id": "G004-application-workflow-service",
       "title": "Application workflow service",
       "objective": "Implement the only state-transition and engineering-evaluation owner, including draft-to-approved specs, revision-aware invalidation, prepared run orchestration without holding a database transaction during plugin execution, retry, cancellation boundaries, cost provenance, and maturity gating.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "in_progress",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-29T00:32:40.878Z",
+      "startedAt": "2026-08-28T12:58:21.903Z",
+      "steeringStatus": "superseded",
+      "supersededBy": [
+        "G008-engineering-change-domain-and-positi",
+        "G009-cross-artifact-change-impact-engine",
+        "G010-evidence-based-release-readiness-ser"
+      ],
+      "steeringEvidence": "User explicitly repositioned FORGE as an engineering change-management AI and evidence-based release validation layer connecting CAD, PLM, Git, and CI instead of a general AI engineer.",
+      "steeringRationale": "The active general workflow-service story is too broad and product-misaligned; replace it with focused domain, impact-analysis, and release-readiness stories while preserving completed deterministic contracts and persistence."
+    },
+    {
+      "id": "G008-engineering-change-domain-and-positi",
+      "title": "Engineering change domain and positioning",
+      "objective": "Reframe FORGE as the validation layer connecting existing CAD, PLM, Git, and CI; define versioned contracts and source-of-truth documentation for hardware revisions, cross-artifact consistency findings, retest requirements, evidence tiers, and release decisions without replacing authoring systems.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-29T00:32:40.878Z",
+      "updatedAt": "2026-08-29T01:04:25.423Z",
+      "evidence": "PRD v4 and README now define FORGE as a read-only validation layer connecting CAD/PLM/Git/CI; forge_core/change_management.py adds source snapshots, cross-domain impacts, findings, explicit evidence tiers, retest requirements, and deterministic READY/BLOCKED contracts; ./forge verify passed 110 tests with 91% total branch coverage.",
+      "supersedes": [
+        "G004-application-workflow-service"
+      ],
+      "startedAt": "2026-08-29T00:33:02.890Z",
+      "completedAt": "2026-08-29T01:04:25.423Z"
+    },
+    {
+      "id": "G009-cross-artifact-change-impact-engine",
+      "title": "Cross-artifact change impact engine",
+      "objective": "Detect hardware revision changes and deterministically map them to affected firmware, BOM, tests, protocol schemas, and documentation; validate pins, voltage, units, command ranges, and protocol compatibility; automatically assign required retests with explicit reasons.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-29T00:32:40.878Z",
+      "updatedAt": "2026-08-29T01:43:20.747Z",
+      "evidence": "forge_core/impact_engine.py implements deterministic source-bound hardware revision delta detection, cross-artifact pin/voltage/unit/command/schema validation, fail-closed policy coverage, and exact-tier automatic retest assignment; tests/test_impact_engine.py covers 20 adversarial cases; ./forge verify passed 130 tests with 91% total coverage; independent re-review found no P0/P1 and judged G009 checkpoint-ready (one non-blocking P2: one canonical projection per domain).",
+      "supersedes": [
+        "G004-application-workflow-service"
+      ],
+      "startedAt": "2026-08-29T01:04:25.580Z",
+      "completedAt": "2026-08-29T01:43:20.747Z"
+    },
+    {
+      "id": "G010-evidence-based-release-readiness-ser",
+      "title": "Evidence-based release readiness service",
+      "objective": "Collect source- and timestamp-bound BOM prices, firmware build and test results, and distinctly typed simulation, bench, HIL, and physical-device evidence; issue release-ready or blocked decisions with traceable blockers and a reproducible report.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-29T00:32:40.878Z",
+      "updatedAt": "2026-08-29T02:16:20.181Z",
+      "evidence": "Implemented evidence-based release readiness with source/timestamp-bound BOM cost, firmware build and exact-tier test evidence; explicit simulation/bench/HIL/physical-device bindings; deterministic READY/BLOCKED report; target protocol schema, firmware source/build artifact, BOM snapshot membership, freshness, and assessment/retest provenance validation. ./forge verify passed Ruff, format, strict mypy, lock/pip checks, 139 tests, and 90% branch coverage. Independent adversarial re-review found no P0/P1 and approved checkpoint; append-only ReleaseDecision persistence remains a G005 P2/WATCH required before G007.",
+      "supersedes": [
+        "G004-application-workflow-service"
+      ],
+      "startedAt": "2026-08-29T01:43:26.473Z",
+      "completedAt": "2026-08-29T02:16:20.181Z"
     },
     {
       "id": "G005-loopback-api-security",
-      "title": "Loopback API security",
-      "objective": "Expose the workflow through a local FastAPI service with loopback binding, host and origin allowlists, mutation CSRF, exact JSON content type, body limits, validation, stable errors, idempotency, concurrency conflict responses, and API integration tests.",
-      "status": "pending",
-      "attempt": 0,
+      "title": "Secure integration and release API",
+      "objective": "Expose change intake, connector snapshots, consistency findings, required retests, evidence ingestion, and release decisions through a secure loopback API; define adapter boundaries for CAD, PLM, Git, and CI without becoming a source-of-truth replacement, and retain idempotency, optimistic concurrency, Origin/Host/CSRF/content-type/body-limit protections.",
+      "status": "in_progress",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-29T02:16:24.142Z",
+      "steeringEvidence": "User positioned FORGE as a connecting verification layer for existing engineering systems.",
+      "steeringRationale": "The API must center change-management and release evidence rather than generic spec execution.",
+      "startedAt": "2026-08-29T02:16:24.142Z"
     },
     {
       "id": "G006-minimal-operator-interface",
-      "title": "Minimal operator interface",
-      "objective": "Build a thin Next.js interface for create, approve, run, inspect evidence, stale-conflict reload, double-submit deduplication, and failed-run retry; keep all engineering calculations in the service.",
+      "title": "Engineering release readiness dashboard",
+      "objective": "Build a thin operator interface showing hardware revision deltas, cross-artifact mismatches, automatically required retests, provenance-bound BOM prices, firmware/build/test evidence, explicit simulation-versus-bench-versus-HIL-versus-device tiers, and release-ready or blocked decisions with drill-down reasons.",
       "status": "pending",
       "attempt": 0,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-29T00:32:57.481Z",
+      "steeringEvidence": "User explicitly requested evidence-based release readiness and clear separation of verification environments.",
+      "steeringRationale": "The operator experience should answer what changed, what is inconsistent, what must be rerun, and why release is blocked."
     },
     {
       "id": "G007-release-quality-gates",
-      "title": "Release quality gates",
-      "objective": "Complete documentation and traceability, run cleanup without behavior change, rerun tests, lint, type checking, build and smoke checks, conduct comprehensive code review and adversarial QA, fix findings, and publish the verified R0 handoff with physical-device features still gated.",
+      "title": "Change-management release quality gates",
+      "objective": "Complete traceability from hardware change through affected artifacts, retest assignment, evidence ingestion, and release decision; verify connector-boundary non-replacement claims, evidence-tier honesty, deterministic reports, security, documentation, cleanup, full tests/build/smoke checks, independent code review, and adversarial QA before the verified handoff.",
       "status": "pending",
       "attempt": 0,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-27T12:28:53.182Z"
+      "updatedAt": "2026-08-29T00:32:57.695Z",
+      "steeringEvidence": "The new product promise is preventing engineering release omissions, so final quality must prove end-to-end traceability and conservative gating.",
+      "steeringRationale": "Final gates must validate the repositioned B2B release workflow rather than generic AI engineering capability."
     }
   ],
-  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail.",
+  "activeGoalId": "G005-loopback-api-security"
 }
