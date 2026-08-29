@@ -553,6 +553,7 @@ R0 API의 모든 경로는 `/api/v1` 아래에 있고 `127.0.0.1`에만 바인�
 | --- | --- | --- |
 | GET | `/api/v1/health` | 로컬 API 상태 조회 |
 | GET | `/api/v1/session` | mutation용 double-submit CSRF token 발급 |
+| GET | `/app/` | 저장된 release decision을 읽는 same-origin operator dashboard |
 | POST | `/api/v1/projects` | 변경관리 프로젝트와 불변 release budget policy 생성 |
 | GET | `/api/v1/projects/{project_id}` | 프로젝트 version 조회 |
 | POST | `/api/v1/projects/{project_id}/connector-snapshots` | 여러 읽기 전용 connector capture를 한 revision snapshot으로 고정 |

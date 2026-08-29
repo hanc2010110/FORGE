@@ -12,6 +12,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["forge_core*", "plugins*"]
 
+[tool.setuptools.package-data]
+forge_core = ["web/*.html", "web/*.css", "web/*.js"]
+
 [project.optional-dependencies]
 dev = ["coverage>=7,<8", "mypy>=1.16,<2", "ruff>=0.12,<1"]
 

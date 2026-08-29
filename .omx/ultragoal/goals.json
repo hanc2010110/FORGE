@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-29T08:46:25.552Z",
+  "updatedAt": "2026-08-29T12:56:58.257Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -124,12 +124,15 @@
       "id": "G006-minimal-operator-interface",
       "title": "Engineering release readiness dashboard",
       "objective": "Build a thin operator interface showing hardware revision deltas, cross-artifact mismatches, automatically required retests, provenance-bound BOM prices, firmware/build/test evidence, explicit simulation-versus-bench-versus-HIL-versus-device tiers, and release-ready or blocked decisions with drill-down reasons.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-29T00:32:57.481Z",
+      "updatedAt": "2026-08-29T12:56:58.257Z",
       "steeringEvidence": "User explicitly requested evidence-based release readiness and clear separation of verification environments.",
-      "steeringRationale": "The operator experience should answer what changed, what is inconsistent, what must be rerun, and why release is blocked."
+      "steeringRationale": "The operator experience should answer what changed, what is inconsistent, what must be rerun, and why release is blocked.",
+      "startedAt": "2026-08-29T12:35:36.668Z",
+      "completedAt": "2026-08-29T12:56:58.257Z",
+      "evidence": "Implemented a thin read-only engineering release dashboard at /app/ with hardware deltas, cross-artifact findings, auto-retests, provenance-bound BOM quotes/timestamps, firmware build/test evidence, explicit static/simulation/bench/HIL/physical-device lanes, READY/BLOCKED reasons, and canonical hash drill-down. Loopback-only server uses strict Host/Origin validation, asset allowlist, CSP without inline code, safe DOM rendering, and packaged same-origin assets. Browser QA verified READY, BLOCKED, not_found, 1440px and 390px layouts with no horizontal overflow or console errors. Wheel asset inclusion verified. ./forge verify passed Ruff, strict mypy, lock/pip checks, 170 tests and 90% coverage. Two independent final reviewers returned GO with no P0/P1 after project-ID contract regression fix."
     },
     {
       "id": "G007-release-quality-gates",

@@ -4,7 +4,7 @@ FORGE는 로봇과 임베디드 제품의 하드웨어 변경을 감지해 펌�
 
 FORGE는 CAD·PLM·Git·CI를 대체하지 않습니다. 각 시스템이 소유한 revision과 실행 결과를 읽기 전용 snapshot으로 연결하고, 변경 영향·필수 재시험·출시 차단 근거를 만드는 **검증 계층**입니다.
 
-현재 상태는 **변경관리 계약 kernel과 보안 루프백 API WIP**입니다. 출시 후보나 실제 장치 제어 제품이 아니며, 결정론적 변경 영향·증거·판정 계약과 읽기 전용 통합 경계부터 고정합니다.
+현재 상태는 **변경관리 계약 kernel, 보안 루프백 API와 읽기 전용 release-readiness 대시보드**입니다. 출시 후보나 실제 장치 제어 제품이 아니며, 결정론적 변경 영향·증거·판정 계약과 읽기 전용 통합 경계부터 고정합니다.
 
 ## 먼저 읽을 문서
 
@@ -28,6 +28,7 @@ FORGE는 CAD·PLM·Git·CI를 대체하지 않습니다. 각 시스템이 소유
 - 프로젝트 생성 시 고정되고 비용 증거가 임의로 바꿀 수 없는 release budget policy
 - CAD·PLM·Git·CI 전용 읽기 전용 adapter manifest와 결정론적 fake connector
 - Host·Origin·CSRF·JSON framing·body limit·멱등성·낙관적 동시성을 강제하는 `127.0.0.1` API
+- hardware revision delta, mismatch, required retest, BOM·build provenance와 명시적 evidence tier를 보여주는 `/app/` 읽기 전용 대시보드
 - 한 번에 실행하는 lint·타입·잠금·테스트·커버리지 검증 명령
 
 ## 현재 포함되지 않은 것
@@ -39,7 +40,7 @@ FORGE는 CAD·PLM·Git·CI를 대체하지 않습니다. 각 시스템이 소유
 
 ## 다음 작업
 
-첫 수직 절편의 계약·저장·루프백 API는 hardware revision snapshot을 비교하고, firmware·BOM·시험·protocol·문서의 영향을 계산하고, 필요한 재시험과 출시 차단 근거를 재현 가능한 보고서로 연결합니다. 다음 작업은 이 API만 사용하는 최소 release-readiness UI와 파일 기반 CAD/PLM export·로컬 Git·CI result connector입니다.
+첫 수직 절편은 hardware revision snapshot을 비교하고, firmware·BOM·시험·protocol·문서의 영향을 계산하고, 필요한 재시험과 출시 차단 근거를 API와 대시보드로 연결합니다. 다음 작업은 end-to-end traceability, adversarial QA와 파일 기반 CAD/PLM export·로컬 Git·CI result connector의 production 경계를 검증하는 것입니다.
 
 코드를 추가하기 전 `PRD.md`의 R0 완료 게이트와 `AGENTS.md`의 검증 규칙을 기준으로 작업 범위를 고정합니다.
 
@@ -52,7 +53,10 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
 .venv/bin/python -m pip install --no-deps -e .
 ./forge dev
+./forge dashboard
 ./forge verify
 ```
 
 `dev`는 현재 계약 kernel의 예제 명세를 승인 상태로 실행하고 evidence manifest를 출력합니다. 이 명령은 외부 CAD·PLM·Git·CI를 수정하거나 실제 장치를 제어하지 않습니다.
+
+`dashboard`는 기본 `forge.db`를 열어 `http://127.0.0.1:43127/app/`에서 읽기 전용 화면을 제공합니다. 다른 DB나 포트는 `FORGE_DATABASE_PATH`와 `FORGE_DASHBOARD_PORT`로 지정합니다. 화면에 project ID와 API가 반환한 canonical decision hash를 입력하면 저장된 판정만 조회하며, build·시험·외부 시스템 변경을 시작하지 않습니다.

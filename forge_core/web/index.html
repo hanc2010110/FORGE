@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="FORGE engineering release readiness dashboard">
+    <title>FORGE · Release Evidence Console</title>
+    <link rel="stylesheet" href="/app/styles.css">
+    <script type="module" src="/app/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+    <header class="topbar">
+      <a class="brand" href="/app/" aria-label="FORGE release evidence console 홈">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span>
+          <strong>FORGE</strong>
+          <small>Release evidence console</small>
+        </span>
+      </a>
+      <div class="boundary-badge">
+        <span class="boundary-dot" aria-hidden="true"></span>
+        READ-ONLY · LOCAL
+      </div>
+    </header>
+
+    <main id="main" class="shell">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">ENGINEERING CHANGE CONTROL</p>
+          <h1 id="page-title">출시 판정보다<br>그 근거를 먼저 봅니다.</h1>
+          <p class="lede">
+            hardware revision 변경부터 firmware, BOM, protocol, 시험 결과까지
+            한 decision에 결합된 증거를 읽기 전용으로 검토합니다.
+          </p>
+        </div>
+        <div class="scope-note">
+          <strong>검증 계층</strong>
+          <p>CAD · PLM · Git · CI의 원본을 수정하거나 대체하지 않습니다.</p>
+        </div>
+      </section>
+
+      <section class="query-panel" aria-labelledby="query-title">
+        <div class="section-heading compact">
+          <div>
+            <p class="section-index">00 · DECISION LOOKUP</p>
+            <h2 id="query-title">불변 release decision 조회</h2>
+          </div>
+          <p>project ID와 canonical decision hash를 입력하세요.</p>
+        </div>
+        <form id="decision-form" novalidate>
+          <label>
+            <span>Project ID</span>
+            <input id="project-id" name="project" required maxlength="128"
+              pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+              autocomplete="off" spellcheck="false" placeholder="robot-controller">
+          </label>
+          <label class="hash-field">
+            <span>Decision hash</span>
+            <input id="decision-hash" name="decision" required maxlength="71"
+              pattern="sha256:[0-9a-f]{64}" autocomplete="off" spellcheck="false"
+              placeholder="sha256:…">
+          </label>
+          <button id="load-button" type="submit">
+            <span>근거 불러오기</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </form>
+        <p id="form-help" class="form-help">
+          조회 값은 URL fragment에만 보존되며 서버 요청 로그나 외부 서비스로 전송하지 않습니다.
+        </p>
+      </section>
+
+      <div id="load-status" class="load-status" role="status" aria-live="polite">
+        <strong>조회 대기</strong>
+        <span>저장된 decision을 선택하면 변경·재시험·증거를 구성합니다.</span>
+      </div>
+
+      <article id="dashboard" class="dashboard" hidden aria-busy="false">
+        <section id="decision-summary" class="decision-summary" tabindex="-1" aria-labelledby="summary-title">
+          <div>
+            <p class="eyebrow">RELEASE READINESS</p>
+            <div class="status-line">
+              <span id="decision-status" class="status-chip">UNKNOWN</span>
+              <span id="evaluated-at" class="timestamp"></span>
+            </div>
+            <h2 id="summary-title">판정 근거 요약</h2>
+            <p id="summary-copy" class="summary-copy"></p>
+          </div>
+          <div id="blocker-summary" class="blocker-summary"></div>
+        </section>
+
+        <dl id="metrics" class="metric-strip"></dl>
+
+        <nav class="section-nav" aria-label="판정 근거 섹션">
+          <a href="#changes">변경</a>
+          <a href="#findings">불일치</a>
+          <a href="#retests">재시험</a>
+          <a href="#evidence">증거 tier</a>
+          <a href="#provenance">원본 근거</a>
+        </nav>
+
+        <section id="changes" class="evidence-section" aria-labelledby="changes-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">01 · HARDWARE REVISION DELTA</p>
+              <h2 id="changes-title">변경된 artifact</h2>
+            </div>
+            <p id="revision-line" class="revision-line"></p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">hardware revision 사이 artifact 변경 목록</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Domain</th>
+                  <th scope="col">Artifact</th>
+                  <th scope="col">Change</th>
+                  <th scope="col">Revision</th>
+                  <th scope="col">Changed contract</th>
+                </tr>
+              </thead>
+              <tbody id="change-rows"></tbody>
+            </table>
+          </div>
+          <div id="change-empty" class="empty-inline" hidden>artifact 변경이 없습니다.</div>
+        </section>
+
+        <section id="findings" class="evidence-section" aria-labelledby="findings-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">02 · CROSS-ARTIFACT CONSISTENCY</p>
+              <h2 id="findings-title">불일치와 blocker</h2>
+            </div>
+            <p>pin · voltage · unit · command range · protocol schema</p>
+          </div>
+          <div id="finding-list" class="finding-list"></div>
+        </section>
+
+        <section id="retests" class="evidence-section" aria-labelledby="retests-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">03 · AUTOMATIC RETEST SCOPE</p>
+              <h2 id="retests-title">필수 재시험</h2>
+            </div>
+            <p>변경 facet과 정확한 evidence tier에 의해 자동 지정됩니다.</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">필수 재시험 상태와 근거</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Test</th>
+                  <th scope="col">Required tier</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Reason</th>
+                  <th scope="col">Evidence</th>
+                </tr>
+              </thead>
+              <tbody id="retest-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="evidence" class="evidence-section" aria-labelledby="evidence-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">04 · EVIDENCE ENVIRONMENTS</p>
+              <h2 id="evidence-title">검증 환경은 합치지 않습니다</h2>
+            </div>
+            <p>simulation, bench, HIL, 실제 장치 결과를 독립적으로 표시합니다.</p>
+          </div>
+          <div id="tier-grid" class="tier-grid"></div>
+          <details id="rejected-details" class="details-card">
+            <summary>거부되거나 대체된 증거 <span id="rejected-count"></span></summary>
+            <ul id="rejected-list" class="code-list"></ul>
+          </details>
+        </section>
+
+        <section id="provenance" class="evidence-section" aria-labelledby="provenance-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">05 · SOURCE PROVENANCE</p>
+              <h2 id="provenance-title">BOM · firmware · canonical binding</h2>
+            </div>
+            <p>출처, 조회 시점, toolchain, source revision과 hash를 확인합니다.</p>
+          </div>
+          <div class="provenance-grid">
+            <section class="provenance-card" aria-labelledby="bom-title">
+              <h3 id="bom-title">BOM 가격 근거</h3>
+              <div id="bom-provenance"></div>
+            </section>
+            <section class="provenance-card" aria-labelledby="build-title">
+              <h3 id="build-title">Firmware build</h3>
+              <div id="build-provenance"></div>
+            </section>
+          </div>
+          <details class="details-card">
+            <summary>Canonical IDs와 hash</summary>
+            <dl id="canonical-bindings" class="binding-list"></dl>
+          </details>
+        </section>
+      </article>
+
+      <noscript>
+        <section class="load-status error">
+          <strong>JavaScript가 비활성화됨</strong>
+          <span>이 읽기 전용 대시보드는 decision JSON을 안전한 DOM으로 구성하기 위해 JavaScript가 필요합니다.</span>
+        </section>
+      </noscript>
+    </main>
+
+    <footer>
+      <span>FORGE R0 · evidence-based validation layer</span>
+      <span>READY는 인증이나 생산 승인을 의미하지 않습니다.</span>
+    </footer>
+  </body>
+</html>

@@ -17,6 +17,10 @@ case "${command_name}" in
     cd "${FORGE_ROOT}"
     "${FORGE_PYTHON}" -m forge_core.demo
     ;;
+  dashboard)
+    cd "${FORGE_ROOT}"
+    "${FORGE_PYTHON}" -m forge_core.dashboard_server
+    ;;
   test)
     cd "${FORGE_ROOT}"
     "${FORGE_COVERAGE}" erase
@@ -44,7 +48,7 @@ case "${command_name}" in
     "${BASH_SOURCE[0]}" test
     ;;
   *)
-    echo "usage: ./forge {dev|test|lint|typecheck|lockcheck|verify}" >&2
+    echo "usage: ./forge {dev|dashboard|test|lint|typecheck|lockcheck|verify}" >&2
     exit 2
     ;;
 esac

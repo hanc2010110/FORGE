@@ -12,6 +12,11 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 
+from forge_core.dashboard import (
+    DASHBOARD_CONTENT_SECURITY_POLICY,
+    is_dashboard_target,
+    load_dashboard_asset,
+)
 from forge_core.persistence import (
     CorruptRecordError,
     IdempotencyConflictError,
@@ -192,7 +197,7 @@ class LoopbackAPI:
 
     def _validate_target(self, target: str) -> None:
         if (
-            not target.startswith("/api/v1/")
+            not (target.startswith("/api/v1/") or is_dashboard_target(target))
             or "?" in target
             or "#" in target
             or "%" in target
@@ -476,16 +481,35 @@ class LoopbackAPI:
         headers: Sequence[tuple[str, str]],
         body: bytes = b"",
     ) -> APIResponse:
+        content_type = "application/json"
         try:
             self._validate_target(target)
             self._validate_host_origin(method, headers)
-            if method == "OPTIONS":
+            dashboard_asset = load_dashboard_asset(target)
+            if dashboard_asset is not None:
+                if method != "GET":
+                    raise APIError(
+                        405,
+                        "method_not_allowed",
+                        "Method is not allowed.",
+                        headers={"Allow": "GET"},
+                    )
+                status = 200
+                response_body = dashboard_asset.body
+                content_type = dashboard_asset.content_type
+                extra_headers = {
+                    "Content-Security-Policy": (DASHBOARD_CONTENT_SECURITY_POLICY)
+                }
+            elif is_dashboard_target(target):
+                raise APIError(404, "not_found", "Resource was not found.")
+            elif method == "OPTIONS":
                 status, payload, extra_headers = self._options(target, headers)
+                response_body = b""
             else:
                 status, payload, extra_headers = self._dispatch(
                     method, target, headers, body
                 )
-            response_body = b"" if status == 204 else _json_bytes(payload)
+                response_body = _json_bytes(payload)
         except APIError as exc:
             status = exc.status
             extra_headers = exc.headers
@@ -548,7 +572,7 @@ class LoopbackAPI:
         response_headers = dict(_SECURITY_HEADERS)
         response_headers.update(extra_headers)
         if status != 204:
-            response_headers["Content-Type"] = "application/json"
+            response_headers["Content-Type"] = content_type
         response_headers["Content-Length"] = str(len(response_body))
         return APIResponse(status=status, headers=response_headers, body=response_body)
 
