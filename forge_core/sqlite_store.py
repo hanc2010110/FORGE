@@ -13,6 +13,7 @@ from typing import Any, NoReturn, TypeVar
 
 from pydantic import ValidationError
 
+from forge_core.change_management import ArtifactDomain
 from forge_core.design import (
     ArtifactKind,
     EvidenceClass,
@@ -50,6 +51,19 @@ from forge_core.persistence import (
     StoredRun,
     StoredSpec,
     VersionConflictError,
+)
+from forge_core.release_persistence import (
+    StoredChangeImpactAssessment,
+    StoredConnectorSnapshot,
+    StoredRawReleaseEvidence,
+    StoredReleaseDecision,
+    StoredReleasePolicy,
+)
+from forge_core.release_readiness import (
+    DEFAULT_RELEASE_READINESS_POLICY,
+    FirmwareBuildEvidence,
+    TestExecutionEvidence,
+    cost_evidence_matches_policy,
 )
 
 ModelT = TypeVar("ModelT", bound=ContractModel)
@@ -185,6 +199,31 @@ class AtomicProjectWrite:
         self._require_project(record.project_id)
         self._store._insert_cost_evaluation(self._connection, record)
 
+    def insert_connector_snapshot(self, record: StoredConnectorSnapshot) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_connector_snapshot(self._connection, record)
+
+    def insert_release_policy(self, record: StoredReleasePolicy) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_release_policy(self._connection, record)
+
+    def insert_change_assessment(self, record: StoredChangeImpactAssessment) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_change_assessment(self._connection, record)
+
+    def insert_release_evidence(self, record: StoredRawReleaseEvidence) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_release_evidence(self._connection, record)
+
+    def append_release_decision(self, record: StoredReleaseDecision) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._append_release_decision(self._connection, record)
+
     def _require_active(self) -> None:
         if self.deleted:
             raise IntegrityConflictError("atomic write cannot mutate a deleted project")
@@ -199,7 +238,7 @@ class AtomicProjectWrite:
 class SQLiteEvidenceStore:
     """Short-transaction SQLite repository for immutable FORGE evidence."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
     BUSY_TIMEOUT_MS = 100
     RETRY_DELAYS = (0.025, 0.05, 0.1)
 
@@ -433,6 +472,78 @@ class SQLiteEvidenceStore:
                     payload_json TEXT NOT NULL,
                     evaluated_at TEXT NOT NULL
                 );
+                CREATE TABLE release_policies(
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    policy_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE connector_snapshots(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    snapshot_id TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL UNIQUE,
+                    hardware_revision_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, snapshot_id)
+                );
+                CREATE TABLE change_assessments(
+                    analysis_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    from_snapshot_id TEXT NOT NULL,
+                    to_snapshot_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, from_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(project_id, to_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE release_evidence(
+                    evidence_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    evidence_kind TEXT NOT NULL CHECK(
+                        evidence_kind IN ('bom_cost', 'firmware_build', 'test_result')
+                    ),
+                    change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    snapshot_hash TEXT NOT NULL,
+                    hardware_revision_id TEXT NOT NULL,
+                    evidence_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, evidence_id)
+                );
+                CREATE TABLE release_decisions(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL CHECK(sequence >= 1),
+                    previous_decision_hash TEXT
+                        REFERENCES release_decisions(decision_hash),
+                    decision_hash TEXT NOT NULL UNIQUE,
+                    report_id TEXT NOT NULL,
+                    change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    target_snapshot_id TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL,
+                    hardware_revision_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('ready', 'blocked')),
+                    payload_json TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, sequence),
+                    FOREIGN KEY(project_id, target_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
                 CREATE TABLE idempotency_records(
                     operation TEXT NOT NULL,
                     project_id TEXT NOT NULL,
@@ -447,7 +558,9 @@ class SQLiteEvidenceStore:
                     VALUES(1, '2026-08-28T00:00:00.000000Z');
                 INSERT INTO schema_migrations(version, applied_at)
                     VALUES(2, '2026-08-29T00:00:00.000000Z');
-                PRAGMA user_version = 2;
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(3, '2026-08-29T02:20:00.000000Z');
+                PRAGMA user_version = 3;
                 COMMIT;
                 """
             )
@@ -457,11 +570,12 @@ class SQLiteEvidenceStore:
             raise MigrationError("failed to initialize SQLite schema") from exc
 
     def _migrate(self, connection: sqlite3.Connection, version: int) -> None:
-        if version != 1:
+        if version not in {1, 2}:
             raise MigrationError(f"no migration path from schema {version}")
         try:
-            connection.executescript(
-                """
+            if version == 1:
+                connection.executescript(
+                    """
                 BEGIN IMMEDIATE;
                 CREATE TABLE approved_specs(
                     project_id TEXT NOT NULL REFERENCES projects(project_id)
@@ -505,8 +619,114 @@ class SQLiteEvidenceStore:
                 PRAGMA user_version = 2;
                 COMMIT;
                 """
-            )
-        except sqlite3.Error as exc:
+                )
+                version = 2
+            if version == 2:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE release_policies(
+                    project_id TEXT PRIMARY KEY REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    policy_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE connector_snapshots(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    snapshot_id TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL UNIQUE,
+                    hardware_revision_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, snapshot_id)
+                );
+                CREATE TABLE change_assessments(
+                    analysis_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    from_snapshot_id TEXT NOT NULL,
+                    to_snapshot_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, from_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(project_id, to_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE release_evidence(
+                    evidence_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    evidence_kind TEXT NOT NULL CHECK(
+                        evidence_kind IN ('bom_cost', 'firmware_build', 'test_result')
+                    ),
+                    change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    snapshot_hash TEXT NOT NULL,
+                    hardware_revision_id TEXT NOT NULL,
+                    evidence_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, evidence_id)
+                );
+                CREATE TABLE release_decisions(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL CHECK(sequence >= 1),
+                    previous_decision_hash TEXT
+                        REFERENCES release_decisions(decision_hash),
+                    decision_hash TEXT NOT NULL UNIQUE,
+                    report_id TEXT NOT NULL,
+                    change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    target_snapshot_id TEXT NOT NULL,
+                    snapshot_hash TEXT NOT NULL,
+                    hardware_revision_id TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('ready', 'blocked')),
+                    payload_json TEXT NOT NULL,
+                    evaluated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, sequence),
+                    FOREIGN KEY(project_id, target_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(3, '2026-08-29T02:20:00.000000Z');
+                PRAGMA user_version = 3;
+                """
+                )
+                policy_hash = canonical_sha256(DEFAULT_RELEASE_READINESS_POLICY)
+                projects = connection.execute(
+                    "SELECT project_id, created_at FROM projects ORDER BY project_id"
+                ).fetchall()
+                for project in projects:
+                    stored_at = datetime.fromisoformat(
+                        str(project["created_at"]).replace("Z", "+00:00")
+                    )
+                    release_policy = StoredReleasePolicy(
+                        project_id=str(project["project_id"]),
+                        policy_hash=policy_hash,
+                        policy=DEFAULT_RELEASE_READINESS_POLICY,
+                        stored_at=stored_at,
+                    )
+                    connection.execute(
+                        "INSERT INTO release_policies VALUES(?, ?, ?, ?)",
+                        (
+                            release_policy.project_id,
+                            release_policy.policy_hash,
+                            _canonical_model(release_policy),
+                            _utc_text(release_policy.stored_at),
+                        ),
+                    )
+                connection.commit()
+        except (sqlite3.Error, ValidationError, ValueError) as exc:
             with suppress(sqlite3.Error):
                 connection.rollback()
             raise MigrationError("failed to migrate SQLite schema") from exc
@@ -1454,6 +1674,485 @@ class SQLiteEvidenceStore:
             ).fetchall()
         return tuple(self._cost_evaluation_from_row(row) for row in rows)
 
+    def store_release_policy(
+        self, record: StoredReleasePolicy, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_release_policy(connection, record),
+        )
+
+    def _insert_release_policy(
+        self, connection: sqlite3.Connection, record: StoredReleasePolicy
+    ) -> None:
+        record = StoredReleasePolicy.model_validate(record.model_dump(mode="python"))
+        self._insert_immutable(
+            connection,
+            "INSERT INTO release_policies VALUES(?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.policy_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_release_policy(self, project_id: str) -> StoredReleasePolicy:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM release_policies WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("release policy not found")
+        return self._release_policy_from_row(row)
+
+    def store_connector_snapshot(
+        self, record: StoredConnectorSnapshot, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_connector_snapshot(connection, record),
+        )
+
+    def _insert_connector_snapshot(
+        self, connection: sqlite3.Connection, record: StoredConnectorSnapshot
+    ) -> None:
+        _safe_id(record.snapshot_id, "snapshot_id")
+        self._insert_immutable(
+            connection,
+            "INSERT INTO connector_snapshots VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.snapshot_id,
+                record.snapshot_hash,
+                record.snapshot.hardware_revision_id,
+                _canonical_model(record),
+                _utc_text(record.snapshot.captured_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_connector_snapshot(
+        self, project_id: str, snapshot_id: str
+    ) -> StoredConnectorSnapshot:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM connector_snapshots
+                WHERE project_id = ? AND snapshot_id = ?
+                """,
+                (project_id, snapshot_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("connector snapshot not found")
+        return self._connector_snapshot_from_row(row)
+
+    def list_connector_snapshots(
+        self, project_id: str
+    ) -> tuple[StoredConnectorSnapshot, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM connector_snapshots
+                WHERE project_id = ? ORDER BY captured_at, snapshot_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._connector_snapshot_from_row(row) for row in rows)
+
+    def store_change_assessment(
+        self, record: StoredChangeImpactAssessment, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_change_assessment(connection, record),
+        )
+
+    def _insert_change_assessment(
+        self, connection: sqlite3.Connection, record: StoredChangeImpactAssessment
+    ) -> None:
+        previous_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, record.from_snapshot_id),
+        ).fetchone()
+        current_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, record.to_snapshot_id),
+        ).fetchone()
+        if previous_row is None or current_row is None:
+            raise RecordNotFoundError("change assessment snapshot not found")
+        previous = self._connector_snapshot_from_row(previous_row)
+        current = self._connector_snapshot_from_row(current_row)
+        assessment = record.assessment
+        projection_hashes = tuple(
+            sorted(
+                item.projection_hash
+                for item in previous.interface_projections
+                + current.interface_projections
+            )
+        )
+        target_protocol_hashes = {
+            item.contract.protocol_schema_hash
+            for item in current.interface_projections
+            if item.source_ref.domain is ArtifactDomain.PROTOCOL
+        }
+        expected_protocol_hash = next(iter(target_protocol_hashes), None)
+        if (
+            assessment.from_snapshot_hash != previous.snapshot_hash
+            or assessment.to_snapshot_hash != current.snapshot_hash
+            or assessment.from_hardware_revision_id
+            != previous.snapshot.hardware_revision_id
+            or assessment.to_hardware_revision_id
+            != current.snapshot.hardware_revision_id
+            or assessment.interface_projection_hashes != projection_hashes
+            or assessment.target_protocol_schema_hash != expected_protocol_hash
+        ):
+            raise IntegrityConflictError(
+                "change assessment does not bind its stored connector snapshots"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO change_assessments VALUES(?, ?, ?, ?, ?, ?)",
+            (
+                record.analysis_hash,
+                record.project_id,
+                record.from_snapshot_id,
+                record.to_snapshot_id,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_change_assessment(self, analysis_hash: str) -> StoredChangeImpactAssessment:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM change_assessments WHERE analysis_hash = ?",
+                (analysis_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("change assessment not found")
+        return self._change_assessment_from_row(row)
+
+    def list_change_assessments(
+        self, project_id: str
+    ) -> tuple[StoredChangeImpactAssessment, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM change_assessments
+                WHERE project_id = ? ORDER BY stored_at, analysis_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._change_assessment_from_row(row) for row in rows)
+
+    def store_release_evidence(
+        self, record: StoredRawReleaseEvidence, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_release_evidence(connection, record),
+        )
+
+    def _insert_release_evidence(
+        self, connection: sqlite3.Connection, record: StoredRawReleaseEvidence
+    ) -> None:
+        record = StoredRawReleaseEvidence.model_validate(
+            record.model_dump(mode="python")
+        )
+        _safe_id(record.evidence_id, "evidence_id")
+        assessment_row = connection.execute(
+            "SELECT * FROM change_assessments WHERE analysis_hash = ?",
+            (record.change_analysis_hash,),
+        ).fetchone()
+        if assessment_row is None:
+            raise RecordNotFoundError("release evidence assessment not found")
+        assessment = self._change_assessment_from_row(assessment_row)
+        snapshot_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, assessment.to_snapshot_id),
+        ).fetchone()
+        if snapshot_row is None:
+            raise CorruptRecordError("release evidence target snapshot is missing")
+        snapshot = self._connector_snapshot_from_row(snapshot_row)
+        if (
+            assessment.project_id != record.project_id
+            or assessment.assessment.to_snapshot_hash != record.snapshot_hash
+            or assessment.assessment.to_hardware_revision_id
+            != record.hardware_revision_id
+            or snapshot.snapshot_hash != record.snapshot_hash
+        ):
+            raise IntegrityConflictError(
+                "release evidence does not bind its stored change assessment"
+            )
+        if isinstance(record.evidence, StoredCostEvaluation):
+            policy_row = connection.execute(
+                "SELECT * FROM release_policies WHERE project_id = ?",
+                (record.project_id,),
+            ).fetchone()
+            if policy_row is None:
+                raise CorruptRecordError("release cost policy is missing")
+            policy = self._release_policy_from_row(policy_row).policy
+            if not cost_evidence_matches_policy(record.evidence, policy):
+                raise IntegrityConflictError(
+                    "release cost evidence does not bind the stored budget policy"
+                )
+            target_bom_hashes = {
+                item.content_hash
+                for item in snapshot.snapshot.artifacts
+                if item.domain is ArtifactDomain.BOM
+            }
+            if record.evidence.bom_artifact_hash not in target_bom_hashes:
+                raise IntegrityConflictError(
+                    "release cost evidence does not bind the target BOM"
+                )
+        occurred_at = (
+            record.evidence.completed_at
+            if isinstance(record.evidence, FirmwareBuildEvidence)
+            else record.evidence.recorded_at
+            if isinstance(record.evidence, TestExecutionEvidence)
+            else record.evidence.evaluated_at
+        )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO release_evidence VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.evidence_id,
+                record.project_id,
+                record.evidence_kind.value,
+                record.change_analysis_hash,
+                record.snapshot_hash,
+                record.hardware_revision_id,
+                record.evidence_hash,
+                _canonical_model(record),
+                _utc_text(occurred_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_release_evidence(
+        self, project_id: str, evidence_id: str
+    ) -> StoredRawReleaseEvidence:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM release_evidence
+                WHERE project_id = ? AND evidence_id = ?
+                """,
+                (project_id, evidence_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("release evidence not found")
+        return self._release_evidence_from_row(row)
+
+    def list_release_evidence(
+        self, project_id: str, *, analysis_hash: str | None = None
+    ) -> tuple[StoredRawReleaseEvidence, ...]:
+        with self._reading() as connection:
+            if analysis_hash is None:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM release_evidence
+                    WHERE project_id = ? ORDER BY occurred_at, evidence_id
+                    """,
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM release_evidence
+                    WHERE project_id = ? AND change_analysis_hash = ?
+                    ORDER BY occurred_at, evidence_id
+                    """,
+                    (project_id, analysis_hash),
+                ).fetchall()
+        return tuple(self._release_evidence_from_row(row) for row in rows)
+
+    def append_release_decision(
+        self, record: StoredReleaseDecision, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._append_release_decision(connection, record),
+        )
+
+    def _append_release_decision(
+        self, connection: sqlite3.Connection, record: StoredReleaseDecision
+    ) -> None:
+        record = StoredReleaseDecision.model_validate(record.model_dump(mode="python"))
+        policy_row = connection.execute(
+            "SELECT * FROM release_policies WHERE project_id = ?",
+            (record.project_id,),
+        ).fetchone()
+        if policy_row is None:
+            raise CorruptRecordError("release decision policy is missing")
+        stored_policy = self._release_policy_from_row(policy_row)
+        if record.decision.policy_hash != stored_policy.policy_hash:
+            raise IntegrityConflictError(
+                "release decision does not bind the stored release policy"
+            )
+        latest_row = connection.execute(
+            """
+            SELECT * FROM release_decisions
+            WHERE project_id = ? ORDER BY sequence DESC LIMIT 1
+            """,
+            (record.project_id,),
+        ).fetchone()
+        if latest_row is None:
+            if record.sequence != 1 or record.previous_decision_hash is not None:
+                raise IntegrityConflictError(
+                    "release decision history must start at sequence one"
+                )
+        else:
+            latest = self._release_decision_from_row(latest_row)
+            if (
+                record.sequence != latest.sequence + 1
+                or record.previous_decision_hash != latest.decision_hash
+                or record.decision.report.evaluated_at
+                < latest.decision.report.evaluated_at
+            ):
+                raise IntegrityConflictError(
+                    "release decision history must be append-only and monotonic"
+                )
+        assessment_row = connection.execute(
+            "SELECT * FROM change_assessments WHERE analysis_hash = ?",
+            (record.decision.report.change_analysis_hash,),
+        ).fetchone()
+        if assessment_row is None:
+            raise RecordNotFoundError("release decision assessment not found")
+        assessment = self._change_assessment_from_row(assessment_row)
+        snapshot_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, assessment.to_snapshot_id),
+        ).fetchone()
+        if snapshot_row is None:
+            raise CorruptRecordError("release decision target snapshot is missing")
+        snapshot = self._connector_snapshot_from_row(snapshot_row)
+        if (
+            assessment.assessment != record.decision.change_assessment
+            or snapshot.snapshot != record.decision.target_snapshot
+        ):
+            raise IntegrityConflictError(
+                "release decision does not reproduce stored target inputs"
+            )
+        raw_by_id: dict[str, StoredRawReleaseEvidence] = {}
+        referenced_ids = set(record.decision.selected_evidence_ids)
+        referenced_ids.update(
+            item.evidence_id for item in record.decision.rejected_evidence
+        )
+        for evidence_id in referenced_ids:
+            row = connection.execute(
+                """
+                SELECT * FROM release_evidence
+                WHERE project_id = ? AND evidence_id = ?
+                """,
+                (record.project_id, evidence_id),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFoundError("release decision raw evidence not found")
+            raw = self._release_evidence_from_row(row)
+            if (
+                raw.project_id != record.project_id
+                or raw.change_analysis_hash != assessment.analysis_hash
+            ):
+                raise IntegrityConflictError(
+                    "release decision evidence belongs to another target"
+                )
+            raw_by_id[evidence_id] = raw
+        if record.decision.cost_evaluation is not None:
+            raw_cost = raw_by_id.get(record.decision.cost_evaluation.evidence_id)
+            if (
+                raw_cost is None
+                or record.decision.cost_evaluation_hash != raw_cost.evidence_hash
+            ):
+                raise IntegrityConflictError(
+                    "release decision cost provenance is not stored raw evidence"
+                )
+        if record.decision.selected_firmware_build is not None:
+            raw_build = raw_by_id.get(
+                record.decision.selected_firmware_build.evidence_id
+            )
+            if (
+                raw_build is None
+                or canonical_sha256(record.decision.selected_firmware_build)
+                != raw_build.evidence_hash
+            ):
+                raise IntegrityConflictError(
+                    "release decision build provenance is not stored raw evidence"
+                )
+        for result in record.decision.selected_test_results:
+            raw_test = raw_by_id.get(result.evidence_id)
+            if raw_test is None or canonical_sha256(result) != raw_test.evidence_hash:
+                raise IntegrityConflictError(
+                    "release decision test provenance is not stored raw evidence"
+                )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO release_decisions "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.sequence,
+                record.previous_decision_hash,
+                record.decision_hash,
+                record.report_id,
+                record.decision.report.change_analysis_hash,
+                record.decision.target_snapshot.snapshot_id,
+                record.decision.report.snapshot_hash,
+                record.decision.report.hardware_revision_id,
+                record.decision.report.status.value,
+                _canonical_model(record),
+                _utc_text(record.decision.report.evaluated_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_release_decision(self, decision_hash: str) -> StoredReleaseDecision:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM release_decisions WHERE decision_hash = ?",
+                (decision_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("release decision not found")
+        return self._release_decision_from_row(row)
+
+    def list_release_decisions(
+        self, project_id: str
+    ) -> tuple[StoredReleaseDecision, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM release_decisions
+                WHERE project_id = ? ORDER BY sequence
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._release_decision_from_row(row) for row in rows)
+
     def put_idempotency(self, record: IdempotencyRecord) -> str:
         def put(connection: sqlite3.Connection) -> str:
             existing = self._load_idempotency(connection, record)
@@ -1814,6 +2513,50 @@ class SQLiteEvidenceStore:
                 project_id,
                 lambda row: f"cost/{row['evidence_id']}.json",
             )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._release_policy_from_row,
+                "SELECT * FROM release_policies WHERE project_id = ?",
+                project_id,
+                lambda _row: "release-policy.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._connector_snapshot_from_row,
+                "SELECT * FROM connector_snapshots "
+                "WHERE project_id = ? ORDER BY captured_at, snapshot_id",
+                project_id,
+                lambda row: f"connector-snapshots/{row['snapshot_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._change_assessment_from_row,
+                "SELECT * FROM change_assessments "
+                "WHERE project_id = ? ORDER BY stored_at, analysis_hash",
+                project_id,
+                lambda row: f"change-assessments/{row['analysis_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._release_evidence_from_row,
+                "SELECT * FROM release_evidence "
+                "WHERE project_id = ? ORDER BY occurred_at, evidence_id",
+                project_id,
+                lambda row: f"release-evidence/{row['evidence_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._release_decision_from_row,
+                "SELECT * FROM release_decisions "
+                "WHERE project_id = ? ORDER BY sequence",
+                project_id,
+                lambda row: f"release-decisions/{row['sequence']}.json",
+            )
         entries.sort(key=lambda entry: str(entry["path"]))
         manifest = [
             {
@@ -1862,8 +2605,9 @@ class SQLiteEvidenceStore:
         entries: list[dict[str, object]], path: str, value: ContractModel
     ) -> None:
         path_pattern = (
-            r"project\.json|"
-            r"(?:specs|spec-events|revisions|approvals|preparations|runs|evidence|cost)/"
+            r"project\.json|release-policy\.json|"
+            r"(?:specs|spec-events|revisions|approvals|preparations|runs|evidence|cost|"
+            r"connector-snapshots|change-assessments|release-evidence|release-decisions)/"
             r"[A-Za-z0-9][A-Za-z0-9._:-]{0,160}\.json"
         )
         if re.fullmatch(path_pattern, path) is None:
@@ -1949,6 +2693,86 @@ class SQLiteEvidenceStore:
             and row["revision_id"] == value.revision_id
             and row["evaluated_at"] == _utc_text(value.evaluated_at),
             "cost evaluation row does not match its payload",
+        )
+        return value
+
+    def _release_policy_from_row(self, row: sqlite3.Row) -> StoredReleasePolicy:
+        value = self._decode(StoredReleasePolicy, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["policy_hash"] == value.policy_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "release policy row does not match its payload",
+        )
+        return value
+
+    def _connector_snapshot_from_row(self, row: sqlite3.Row) -> StoredConnectorSnapshot:
+        value = self._decode(StoredConnectorSnapshot, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["snapshot_id"] == value.snapshot_id
+            and row["snapshot_hash"] == value.snapshot_hash
+            and row["hardware_revision_id"] == value.snapshot.hardware_revision_id
+            and row["captured_at"] == _utc_text(value.snapshot.captured_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "connector snapshot row does not match its payload",
+        )
+        return value
+
+    def _change_assessment_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredChangeImpactAssessment:
+        value = self._decode(StoredChangeImpactAssessment, row["payload_json"])
+        self._require_binding(
+            row["analysis_hash"] == value.analysis_hash
+            and row["project_id"] == value.project_id
+            and row["from_snapshot_id"] == value.from_snapshot_id
+            and row["to_snapshot_id"] == value.to_snapshot_id
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "change assessment row does not match its payload",
+        )
+        return value
+
+    def _release_evidence_from_row(self, row: sqlite3.Row) -> StoredRawReleaseEvidence:
+        value = self._decode(StoredRawReleaseEvidence, row["payload_json"])
+        occurred_at = (
+            value.evidence.completed_at
+            if isinstance(value.evidence, FirmwareBuildEvidence)
+            else value.evidence.recorded_at
+            if isinstance(value.evidence, TestExecutionEvidence)
+            else value.evidence.evaluated_at
+        )
+        self._require_binding(
+            row["evidence_id"] == value.evidence_id
+            and row["project_id"] == value.project_id
+            and row["evidence_kind"] == value.evidence_kind.value
+            and row["change_analysis_hash"] == value.change_analysis_hash
+            and row["snapshot_hash"] == value.snapshot_hash
+            and row["hardware_revision_id"] == value.hardware_revision_id
+            and row["evidence_hash"] == value.evidence_hash
+            and row["occurred_at"] == _utc_text(occurred_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "release evidence row does not match its payload",
+        )
+        return value
+
+    def _release_decision_from_row(self, row: sqlite3.Row) -> StoredReleaseDecision:
+        value = self._decode(StoredReleaseDecision, row["payload_json"])
+        decision = value.decision
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and int(row["sequence"]) == value.sequence
+            and row["previous_decision_hash"] == value.previous_decision_hash
+            and row["decision_hash"] == value.decision_hash
+            and row["report_id"] == value.report_id
+            and row["change_analysis_hash"] == decision.report.change_analysis_hash
+            and row["target_snapshot_id"] == decision.target_snapshot.snapshot_id
+            and row["snapshot_hash"] == decision.report.snapshot_hash
+            and row["hardware_revision_id"] == decision.report.hardware_revision_id
+            and row["status"] == decision.report.status.value
+            and row["evaluated_at"] == _utc_text(decision.report.evaluated_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "release decision row does not match its payload",
         )
         return value
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from decimal import Decimal
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Literal
@@ -55,6 +56,7 @@ class EvidenceRejectionReason(StrEnum):
     NOT_REQUIRED = "not_required"
     SUPERSEDED = "superseded"
     AMBIGUOUS_LATEST_TIMESTAMP = "ambiguous_latest_timestamp"
+    COST_POLICY_MISMATCH = "cost_policy_mismatch"
 
 
 class BaselineRetestRule(ContractModel):
@@ -70,6 +72,10 @@ class ReleaseReadinessPolicy(ContractModel):
     baseline_retests: tuple[BaselineRetestRule, ...]
     max_age_seconds: Mapping[str, int]
     runtime_test_ids_requiring_build: tuple[str, ...]
+    cost_currency: str = Field(pattern=r"^[A-Z]{3}$")
+    cost_budget_limit: Decimal = Field(ge=0)
+    cost_reserve_rate: Decimal = Field(ge=0)
+    cost_dependency_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
     @field_validator("max_age_seconds", mode="after")
     @classmethod
@@ -89,6 +95,11 @@ class ReleaseReadinessPolicy(ContractModel):
 
     @model_validator(mode="after")
     def baseline_and_runtime_rules_must_be_safe(self) -> ReleaseReadinessPolicy:
+        if (
+            not self.cost_budget_limit.is_finite()
+            or not self.cost_reserve_rate.is_finite()
+        ):
+            raise ValueError("release cost policy values must be finite")
         baseline_keys = [
             (item.test_id, item.required_tier) for item in self.baseline_retests
         ]
@@ -144,7 +155,22 @@ DEFAULT_RELEASE_READINESS_POLICY = ReleaseReadinessPolicy(
         "physical-device-smoke",
         "protocol-conformance",
     ),
+    cost_currency="USD",
+    cost_budget_limit=Decimal("30.00"),
+    cost_reserve_rate=Decimal("0.10"),
+    cost_dependency_hash="sha256:" + "d" * 64,
 )
+
+
+def cost_evidence_matches_policy(
+    evidence: StoredCostEvaluation, policy: ReleaseReadinessPolicy
+) -> bool:
+    return (
+        evidence.dependency_hash == policy.cost_dependency_hash
+        and evidence.evaluation.currency == policy.cost_currency
+        and str(evidence.evaluation.budget_limit) == str(policy.cost_budget_limit)
+        and str(evidence.evaluation.reserve_rate) == str(policy.cost_reserve_rate)
+    )
 
 
 class FirmwareBuildEvidence(ContractModel):
@@ -337,6 +363,10 @@ class ReleaseReadinessDecision(ContractModel):
             EvidenceTier.STATIC
         )
         if self.cost_evaluation is not None:
+            if not cost_evidence_matches_policy(self.cost_evaluation, self.policy):
+                raise ValueError(
+                    "selected BOM cost does not bind release budget policy"
+                )
             required_parts = {
                 item.part_number for item in self.cost_evaluation.bom if item.required
             }
@@ -495,9 +525,9 @@ class ReleaseReadinessDecision(ContractModel):
             current_cost = evaluate_cost(
                 self.cost_evaluation.bom,
                 self.cost_evaluation.quotes,
-                currency=self.cost_evaluation.evaluation.currency,
-                budget_limit=self.cost_evaluation.evaluation.budget_limit,
-                reserve_rate=self.cost_evaluation.evaluation.reserve_rate,
+                currency=self.policy.cost_currency,
+                budget_limit=self.policy.cost_budget_limit,
+                reserve_rate=self.policy.cost_reserve_rate,
                 evaluated_at=self.report.evaluated_at,
             )
             expected_cost = _normalize_cost_for_target(
@@ -771,6 +801,7 @@ def evaluate_release_readiness(
     target_snapshot: ConnectorSnapshot,
     *,
     cost_evaluation: StoredCostEvaluation | None,
+    pre_rejected_cost_evidence: Sequence[EvidenceRejection] = (),
     firmware_builds: Sequence[FirmwareBuildEvidence],
     test_results: Sequence[TestExecutionEvidence],
     evaluated_at: datetime,
@@ -787,6 +818,10 @@ def evaluate_release_readiness(
         cost_evaluation = StoredCostEvaluation.model_validate(
             cost_evaluation.model_dump(mode="python")
         )
+    pre_rejected_cost_evidence = tuple(
+        EvidenceRejection.model_validate(item.model_dump(mode="python"))
+        for item in pre_rejected_cost_evidence
+    )
     firmware_builds = tuple(
         FirmwareBuildEvidence.model_validate(item.model_dump(mode="python"))
         for item in firmware_builds
@@ -805,15 +840,20 @@ def evaluate_release_readiness(
         or target_snapshot.hardware_revision_id != assessment.to_hardware_revision_id
     ):
         raise ValueError("target snapshot identity does not match change assessment")
-    all_ids = [build.evidence_id for build in firmware_builds] + [
-        result.evidence_id for result in test_results
-    ]
+    all_ids = (
+        ([cost_evaluation.evidence_id] if cost_evaluation is not None else [])
+        + [item.evidence_id for item in pre_rejected_cost_evidence]
+        + [build.evidence_id for build in firmware_builds]
+        + [result.evidence_id for result in test_results]
+    )
     if len(all_ids) != len(set(all_ids)):
         raise ValueError("collected release evidence IDs must be unique")
 
     requirements = _with_baselines(assessment, policy)
     requirement_keys = {(item.test_id, item.required_tier) for item in requirements}
-    rejections: dict[str, EvidenceRejectionReason] = {}
+    rejections: dict[str, EvidenceRejectionReason] = {
+        item.evidence_id: item.reason for item in pre_rejected_cost_evidence
+    }
     candidates: dict[tuple[str, EvidenceTier], list[ReleaseEvidence]] = {}
     findings = list(assessment.findings)
     if assessment.target_protocol_schema_hash is None:
@@ -828,13 +868,30 @@ def evaluate_release_readiness(
 
     cost_record = cost_evaluation
     if cost_record is None:
-        findings.append(
-            _cost_finding(
-                "bom_cost_evidence_missing",
-                "No source- and timestamp-bound BOM cost evaluation was provided.",
-                "cost-evaluation:missing",
+        ambiguous_cost_ids = tuple(
+            sorted(
+                item.evidence_id
+                for item in pre_rejected_cost_evidence
+                if item.reason is EvidenceRejectionReason.AMBIGUOUS_LATEST_TIMESTAMP
             )
         )
+        if ambiguous_cost_ids:
+            findings.append(
+                _cost_finding(
+                    "bom_cost_evidence_ambiguous",
+                    "Multiple BOM cost evaluations share the latest timestamp; "
+                    "release must fail closed until one current source is selected.",
+                    ",".join(ambiguous_cost_ids),
+                )
+            )
+        else:
+            findings.append(
+                _cost_finding(
+                    "bom_cost_evidence_missing",
+                    "No source- and timestamp-bound BOM cost evaluation was provided.",
+                    "cost-evaluation:missing",
+                )
+            )
     elif (
         cost_record.project_id != assessment.project_id
         or cost_record.revision_id != assessment.to_hardware_revision_id
@@ -845,6 +902,18 @@ def evaluate_release_readiness(
                 "BOM cost provenance targets a different project or revision.",
                 cost_record.evidence_id,
             )
+        )
+        cost_record = None
+    elif not cost_evidence_matches_policy(cost_record, policy):
+        findings.append(
+            _cost_finding(
+                "bom_cost_policy_mismatch",
+                "BOM cost evidence does not bind the approved release budget policy.",
+                cost_record.evidence_id,
+            )
+        )
+        rejections[cost_record.evidence_id] = (
+            EvidenceRejectionReason.COST_POLICY_MISMATCH
         )
         cost_record = None
     elif cost_record.evaluated_at > evaluated_at:
@@ -916,9 +985,9 @@ def evaluate_release_readiness(
             current_cost = evaluate_cost(
                 cost_record.bom,
                 cost_record.quotes,
-                currency=cost_record.evaluation.currency,
-                budget_limit=cost_record.evaluation.budget_limit,
-                reserve_rate=cost_record.evaluation.reserve_rate,
+                currency=policy.cost_currency,
+                budget_limit=policy.cost_budget_limit,
+                reserve_rate=policy.cost_reserve_rate,
                 evaluated_at=evaluated_at,
             )
             cost_evidence = _normalize_cost(
@@ -1274,6 +1343,7 @@ __all__ = [
     "ReleaseReadinessDecision",
     "ReleaseReadinessPolicy",
     "TestExecutionEvidence",
+    "cost_evidence_matches_policy",
     "evaluate_release_readiness",
     "render_release_report",
 ]

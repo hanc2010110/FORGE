@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-29T02:16:24.142Z",
+  "updatedAt": "2026-08-29T08:46:25.552Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -110,13 +110,15 @@
       "id": "G005-loopback-api-security",
       "title": "Secure integration and release API",
       "objective": "Expose change intake, connector snapshots, consistency findings, required retests, evidence ingestion, and release decisions through a secure loopback API; define adapter boundaries for CAD, PLM, Git, and CI without becoming a source-of-truth replacement, and retain idempotency, optimistic concurrency, Origin/Host/CSRF/content-type/body-limit protections.",
-      "status": "in_progress",
+      "status": "complete",
       "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-29T02:16:24.142Z",
+      "updatedAt": "2026-08-29T08:46:25.552Z",
       "steeringEvidence": "User positioned FORGE as a connecting verification layer for existing engineering systems.",
       "steeringRationale": "The API must center change-management and release evidence rather than generic spec execution.",
-      "startedAt": "2026-08-29T02:16:24.142Z"
+      "startedAt": "2026-08-29T02:16:24.142Z",
+      "completedAt": "2026-08-29T08:46:25.552Z",
+      "evidence": "Implemented secure loopback engineering release API with read-only CAD/PLM/Git/CI connector boundaries and persisted capture provenance; immutable per-project release policy with v1/v2->v3 backfill; project-scoped append-only raw evidence and decisions; canonical hash binding for policy and selected evidence; idempotency, optimistic concurrency, exact Host/Origin/CSRF/content-type/body limits; BOM policy/timestamp ambiguity fail-closed. ./forge verify passed Ruff, strict mypy, lock/pip checks, 164 tests and 90% total branch coverage. Two independent final reviewers returned GO with no P0/P1."
     },
     {
       "id": "G006-minimal-operator-interface",
@@ -141,6 +143,5 @@
       "steeringRationale": "Final gates must validate the repositioned B2B release workflow rather than generic AI engineering capability."
     }
   ],
-  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail.",
-  "activeGoalId": "G005-loopback-api-security"
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
 }

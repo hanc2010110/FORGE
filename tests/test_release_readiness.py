@@ -31,9 +31,11 @@ from forge_core.impact_engine import (
 from forge_core.models import Quantity, SourceRef, Verdict
 from forge_core.persistence import StoredCostEvaluation
 from forge_core.release_readiness import (
+    DEFAULT_RELEASE_READINESS_POLICY,
     EvidenceRejectionReason,
     FirmwareBuildEvidence,
     ReleaseReadinessDecision,
+    ReleaseReadinessPolicy,
     TestExecutionEvidence,
     evaluate_release_readiness,
 )
@@ -41,6 +43,16 @@ from forge_core.release_readiness import (
 NOW = datetime(2026, 8, 29, 12, tzinfo=UTC)
 HASH = "sha256:" + "a" * 64
 BUILD_HASH = "sha256:" + "b" * 64
+
+
+class ReleaseReadinessPolicyTests(unittest.TestCase):
+    def test_cost_currency_requires_three_uppercase_ascii_letters(self) -> None:
+        payload = DEFAULT_RELEASE_READINESS_POLICY.model_dump(mode="python")
+        for currency in ("U", "USDD", "usd", "U1D"):
+            with self.subTest(currency=currency), self.assertRaises(ValidationError):
+                ReleaseReadinessPolicy.model_validate(
+                    payload | {"cost_currency": currency}
+                )
 
 
 def artifact(
@@ -484,6 +496,64 @@ class ReleaseReadinessServiceTests(unittest.TestCase):
         )
         self.assertEqual(future.verdict, Verdict.INDETERMINATE)
         self.assertEqual(future.reasons, ("future_quote:FAN-120",))
+
+    def test_cost_evidence_cannot_choose_its_release_budget_policy(self) -> None:
+        assessment, snapshot = release_context()
+        cost = cost_record(snapshot)
+        inflated = evaluate_cost(
+            cost.bom,
+            cost.quotes,
+            currency="USD",
+            budget_limit=Decimal("999999"),
+            reserve_rate=Decimal("0"),
+            evaluated_at=cost.evaluated_at,
+        )
+        malicious = cost.model_copy(
+            update={
+                "dependency_hash": "sha256:" + "0" * 64,
+                "evaluation": inflated,
+            }
+        )
+        decision = evaluate_release_readiness(
+            assessment,
+            snapshot,
+            cost_evaluation=malicious,
+            firmware_builds=(build_evidence(assessment, snapshot),),
+            test_results=required_test_evidence(assessment, snapshot),
+            evaluated_at=NOW,
+        )
+        self.assertEqual(decision.report.status, ReleaseStatus.BLOCKED)
+        self.assertIn("finding:bom_cost_policy_mismatch", decision.report.blocker_codes)
+        self.assertIn(
+            EvidenceRejectionReason.COST_POLICY_MISMATCH,
+            {item.reason for item in decision.rejected_evidence},
+        )
+
+        scale_changed = cost.model_copy(
+            update={
+                "evaluation": evaluate_cost(
+                    cost.bom,
+                    cost.quotes,
+                    currency="USD",
+                    budget_limit=Decimal("30"),
+                    reserve_rate=Decimal("0.10"),
+                    evaluated_at=cost.evaluated_at,
+                )
+            }
+        )
+        scale_decision = evaluate_release_readiness(
+            assessment,
+            snapshot,
+            cost_evaluation=scale_changed,
+            firmware_builds=(build_evidence(assessment, snapshot),),
+            test_results=required_test_evidence(assessment, snapshot),
+            evaluated_at=NOW,
+        )
+        self.assertEqual(scale_decision.report.status, ReleaseStatus.BLOCKED)
+        self.assertIn(
+            "finding:bom_cost_policy_mismatch",
+            scale_decision.report.blocker_codes,
+        )
 
     def test_runtime_results_require_the_selected_firmware_artifact(self) -> None:
         assessment, snapshot = release_context(hardware_change=True)

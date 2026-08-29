@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-import sys
 import unittest
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -11,14 +10,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from pydantic import ValidationError
-
-sys.path.insert(0, str(Path(__file__).parent))
-from test_engine import (  # noqa: E402
-    approval_for,
-    engine_for,
-    make_revision,
-    make_spec,
-)
 
 from forge_core.constraints import BOMLine, QuoteSnapshot, evaluate_cost  # noqa: E402
 from forge_core.design import (  # noqa: E402
@@ -54,11 +45,20 @@ from forge_core.persistence import (  # noqa: E402
     StoredSpec,
     VersionConflictError,
 )
+from forge_core.release_readiness import (  # noqa: E402
+    DEFAULT_RELEASE_READINESS_POLICY,
+)
 from forge_core.sqlite_store import (  # noqa: E402
     AtomicProjectWrite,
     SQLiteEvidenceStore,
 )
 from plugins.fake import FakePhysicsPlugin  # noqa: E402
+from tests.test_engine import (
+    approval_for,
+    engine_for,
+    make_revision,
+    make_spec,
+)
 
 
 class SQLiteEvidenceStoreTests(unittest.TestCase):
@@ -160,7 +160,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
     def test_schema_initialization_pragmas_reopen_and_newer_rejection(self) -> None:
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(
                 connection.execute("PRAGMA journal_mode").fetchone()[0], "wal"
             )
@@ -168,7 +168,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0],
-                2,
+                3,
             )
         reopened = SQLiteEvidenceStore(self.path)
         reopened.create_project(self.project)
@@ -176,25 +176,38 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
         newer = Path(self.temporary.name) / "newer.db"
         with sqlite3.connect(newer) as connection:
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
         with self.assertRaises(MigrationError):
             SQLiteEvidenceStore(newer)
         with sqlite3.connect(newer) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
 
-    def test_schema_v1_is_migrated_to_v2_without_losing_records(self) -> None:
+    def test_schema_v1_is_migrated_to_v3_without_losing_records(self) -> None:
         self.store.create_project(self.project)
         with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE release_decisions")
+            connection.execute("DROP TABLE release_evidence")
+            connection.execute("DROP TABLE change_assessments")
+            connection.execute("DROP TABLE connector_snapshots")
+            connection.execute("DROP TABLE release_policies")
             connection.execute("DROP TABLE cost_evaluations")
             connection.execute("DROP TABLE spec_state_events")
             connection.execute("DROP TABLE approved_specs")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 3")
             connection.execute("DELETE FROM schema_migrations WHERE version = 2")
             connection.execute("PRAGMA user_version = 1")
 
         migrated = SQLiteEvidenceStore(self.path)
         self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        migrated_policy = migrated.get_release_policy(self.project.project_id)
+        self.assertEqual(migrated_policy.policy, DEFAULT_RELEASE_READINESS_POLICY)
+        self.assertEqual(
+            migrated_policy.policy_hash,
+            canonical_sha256(DEFAULT_RELEASE_READINESS_POLICY),
+        )
+        self.assertEqual(migrated_policy.stored_at, self.project.created_at)
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -202,8 +215,48 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 )
             }
         self.assertTrue(
-            {"approved_specs", "spec_state_events", "cost_evaluations"} <= tables
+            {
+                "approved_specs",
+                "spec_state_events",
+                "cost_evaluations",
+                "connector_snapshots",
+                "change_assessments",
+                "release_evidence",
+                "release_decisions",
+                "release_policies",
+            }
+            <= tables
         )
+
+    def test_schema_v2_is_migrated_to_v3_without_losing_records(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE release_decisions")
+            connection.execute("DROP TABLE release_evidence")
+            connection.execute("DROP TABLE change_assessments")
+            connection.execute("DROP TABLE connector_snapshots")
+            connection.execute("DROP TABLE release_policies")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 3")
+            connection.execute("PRAGMA user_version = 2")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        migrated_policy = migrated.get_release_policy(self.project.project_id)
+        self.assertEqual(migrated_policy.policy, DEFAULT_RELEASE_READINESS_POLICY)
+        self.assertEqual(
+            migrated_policy.policy_hash,
+            canonical_sha256(DEFAULT_RELEASE_READINESS_POLICY),
+        )
+        self.assertEqual(migrated_policy.stored_at, self.project.created_at)
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT MAX(version) FROM schema_migrations"
+                ).fetchone()[0],
+                3,
+            )
 
     def test_migration_history_corruption_is_rejected(self) -> None:
         with sqlite3.connect(self.path) as connection:

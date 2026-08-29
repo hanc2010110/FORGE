@@ -463,28 +463,28 @@ class PhysicsPlugin(Protocol):
 
 ```mermaid
 flowchart TD
-    A["로컬 웹 UI"] --> B["프로젝트 API"]
-    B --> C["인터뷰·명세 컴파일러"]
-    C --> D["명세 정책 검증"]
-    D --> E["승인된 SpecVersion"]
-    E --> F["분석 실행기"]
-    F --> G["허용 목록 PhysicsPlugin"]
-    G --> H["검증 게이트"]
-    H --> I["증거·보고서"]
-    B --> J["로컬 DB·프로젝트 폴더"]
-    F --> J
-    I --> J
+    A["CAD·EDA / PLM"] -->|"읽기 전용 snapshot"| E["FORGE adapter 경계"]
+    B["Git / CI"] -->|"읽기 전용 revision·결과"| E
+    C["시험 시스템"] -->|"simulation·bench·HIL·device 증거"| E
+    D["로컬 웹 UI"] --> F["127.0.0.1 변경관리 API"]
+    E --> F
+    F --> G["변경 영향·일관성·재시험 엔진"]
+    G --> H["결정론적 release policy"]
+    F --> I["append-only SQLite evidence store"]
+    G --> I
+    H --> I
+    H --> J["READY / BLOCKED 근거 보고서"]
 ```
 
 구현 경계:
 
-- Web: 프로젝트, 인터뷰, 명세 승인, 결과·증거 UI
-- API: 입력 검증, 상태 전이, 로컬 저장, 실행 요청
-- Worker: 분석 실행, 취소, 자원 제한, 산출물 생성
-- Schemas: Python과 TypeScript 계약의 단일 생성 원본
-- Physics Core: 단위, 공식 레지스트리, 판정 집계
-- Plugins: 도메인별 계산 구현
-- Report Core: 증거 링크와 내보내기
+- Web: 변경 항목, 불일치, 필수 재시험, 증거 tier와 출시 차단 근거를 표시하는 얇은 클라이언트
+- API: Host·Origin·CSRF·입력 검증, 멱등성, 낙관적 동시성과 로컬 상태 전이
+- Application Service: snapshot 조립, 변경 영향, 증거 결합과 출시 판정의 유일한 소유자
+- Adapter: CAD·PLM·Git·CI 원본의 승인·수정·실행 권한 없이 정규화된 snapshot만 제공
+- Evidence Store: connector snapshot, assessment, 원시 BOM/build/test 증거와 판정을 append-only로 보존
+- Policy Core: pin·전압·단위·명령·protocol 검증, required retest와 `READY`/`BLOCKED` 판정
+- Report Core: 원본 revision·hash·조회 시점과 차단 근거를 결합한 재현 가능한 보고서
 
 ### 11.1 연결 트랙 구조
 
@@ -547,27 +547,24 @@ forge/
 
 ## 13. 초기 API
 
+R0 API의 모든 경로는 `/api/v1` 아래에 있고 `127.0.0.1`에만 바인딩한다. 이 API는 CAD·PLM·Git·CI를 수정하거나 build·시험을 원격 실행하지 않는다. connector가 읽어 온 불변 snapshot과 외부에서 수집된 결과를 검증 계층에 적재한다.
+
 | 메서드 | 경로 | 역할 |
 | --- | --- | --- |
-| POST | `/projects` | 프로젝트 생성 |
-| GET | `/projects/{id}` | 프로젝트 조회 |
-| DELETE | `/projects/{id}` | 프로젝트와 산출물 삭제 |
-| POST | `/projects/{id}/messages` | 원문 또는 질문 답변 입력 |
-| GET | `/projects/{id}/questions` | 다음 질문 조회 |
-| POST | `/projects/{id}/specs` | 명세 초안 버전 생성 |
-| GET | `/projects/{id}/specs/{version}` | 명세 버전 조회 |
-| POST | `/projects/{id}/specs/{version}/approve` | 명세 버전 승인 |
-| POST | `/projects/{id}/analyses` | 승인 명세 분석 실행 |
-| GET | `/analyses/{id}` | 상태와 결과 조회 |
-| POST | `/analyses/{id}/cancel` | 실행 취소 |
-| POST | `/analyses/{id}/retry` | 같은 명세로 새 실행 생성 |
-| GET | `/analyses/{id}/artifacts` | 보고서·manifest 목록 |
-| POST | `/projects/{id}/export` | 프로젝트 내보내기 |
-| POST | `/projects/{id}/clone` | 승인 명세를 새 프로젝트 초안으로 복제 |
-| POST | `/projects/import` | 내보낸 프로젝트 검증·가져오기 |
+| GET | `/api/v1/health` | 로컬 API 상태 조회 |
+| GET | `/api/v1/session` | mutation용 double-submit CSRF token 발급 |
+| POST | `/api/v1/projects` | 변경관리 프로젝트와 불변 release budget policy 생성 |
+| GET | `/api/v1/projects/{project_id}` | 프로젝트 version 조회 |
+| POST | `/api/v1/projects/{project_id}/connector-snapshots` | 여러 읽기 전용 connector capture를 한 revision snapshot으로 고정 |
+| GET | `/api/v1/projects/{project_id}/connector-snapshots/{snapshot_id}` | source·revision·hash가 결합된 snapshot 조회 |
+| POST | `/api/v1/projects/{project_id}/change-impacts` | 두 snapshot 사이 영향·불일치·필수 재시험 계산 |
+| GET | `/api/v1/projects/{project_id}/change-impacts/{analysis_hash}` | 불변 변경 영향 조회 |
+| POST | `/api/v1/projects/{project_id}/release-evidence` | BOM cost·firmware build·명시적 tier 시험 결과 적재 |
+| GET | `/api/v1/projects/{project_id}/release-evidence/{evidence_id}` | provenance-bound 원시 증거 조회 |
+| POST | `/api/v1/projects/{project_id}/release-decisions` | 정책 기반 `READY`/`BLOCKED` 판정과 보고서 생성 |
+| GET | `/api/v1/projects/{project_id}/release-decisions/{decision_hash}` | append-only 판정 이력 조회 |
 
-변경 요청에는 idempotency key를 지원한다. API 오류는 안정적인 코드와 사용자 메시지를 분리한다.
-분석 preflight가 거부되면 `POST /projects/{id}/analyses`는 `422`와 저장된 `PreflightResult`를 반환하고 `AnalysisRun`을 만들지 않는다.
+모든 변경 요청은 `Idempotency-Key`와 double-submit CSRF를 요구한다. 기존 프로젝트 변경은 현재 project version을 인코딩한 `If-Match`도 요구하며 stale version은 `409`다. 동일 키·동일 요청은 원 응답을 재생하고 동일 키·다른 요청은 거부한다. 프로젝트 생성 시 currency·budget limit·reserve rate·budget-policy dependency hash를 불변 release policy로 저장한다. BOM 비용 증거는 이 정책을 변경할 수 없고 ingest·판정·영속화 단계에서 모두 exact match를 통과해야 한다. 요청은 정확한 `application/json`, 단일 `Content-Length`, 정의된 body limit를 통과해야 하며 `Transfer-Encoding`은 받지 않는다. 오류는 안정적인 code와 노출 안전한 message·field path만 반환한다.
 
 ### 13.1 연결 트랙 API
 
