@@ -57,6 +57,6 @@ python3 -m venv .venv
 ./forge verify
 ```
 
-`dev`는 현재 계약 kernel의 예제 명세를 승인 상태로 실행하고 evidence manifest를 출력합니다. 이 명령은 외부 CAD·PLM·Git·CI를 수정하거나 실제 장치를 제어하지 않습니다.
+`dev`는 결정론적 read-only PLM·Git connector로 `HW-11`→`HW-12` 변경을 저장·분석하고, 자동 지정된 재시험과 BOM·build·시험 증거를 수집한 뒤 저장된 `READY` 판정과 canonical hash를 출력합니다. 동일 판정 요청의 idempotent replay도 검증하며, 외부 CAD·PLM·Git·CI를 수정하거나 실제 장치를 제어하지 않습니다.
 
 `dashboard`는 기본 `forge.db`를 열어 `http://127.0.0.1:43127/app/`에서 읽기 전용 화면을 제공합니다. 다른 DB나 포트는 `FORGE_DATABASE_PATH`와 `FORGE_DASHBOARD_PORT`로 지정합니다. 화면에 project ID와 API가 반환한 canonical decision hash를 입력하면 저장된 판정만 조회하며, build·시험·외부 시스템 변경을 시작하지 않습니다.

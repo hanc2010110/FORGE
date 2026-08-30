@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-29T12:56:58.257Z",
+  "updatedAt": "2026-08-30T10:34:41.066Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -138,12 +138,27 @@
       "id": "G007-release-quality-gates",
       "title": "Change-management release quality gates",
       "objective": "Complete traceability from hardware change through affected artifacts, retest assignment, evidence ingestion, and release decision; verify connector-boundary non-replacement claims, evidence-tier honesty, deterministic reports, security, documentation, cleanup, full tests/build/smoke checks, independent code review, and adversarial QA before the verified handoff.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "review_blocked",
+      "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-29T00:32:57.695Z",
+      "updatedAt": "2026-08-30T10:29:53.213Z",
       "steeringEvidence": "The new product promise is preventing engineering release omissions, so final quality must prove end-to-end traceability and conservative gating.",
-      "steeringRationale": "Final gates must validate the repositioned B2B release workflow rather than generic AI engineering capability."
+      "steeringRationale": "Final gates must validate the repositioned B2B release workflow rather than generic AI engineering capability.",
+      "startedAt": "2026-08-29T12:57:32.501Z",
+      "reviewBlockedAt": "2026-08-30T10:29:53.213Z",
+      "evidence": "Independent code-reviewer found one P2: ./forge dev still exposed FakePhysicsPlugin instead of the repositioned engineering release workflow. Fixed in forge_core/demo.py with README and tests/test_demo.py; fresh verification and final re-review required."
+    },
+    {
+      "id": "G011-resolve-final-dev-entrypoint-review",
+      "title": "Resolve final dev-entrypoint review blocker",
+      "objective": "Replace the legacy generic fake analysis demo with a tested deterministic hardware-change-to-release-readiness vertical slice and repeat all final quality gates.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-30T10:29:53.213Z",
+      "updatedAt": "2026-08-30T10:34:41.066Z",
+      "evidence": "Resolved the final dev-entrypoint review blocker: ./forge dev now persists and evaluates deterministic read-only HW-11 to HW-12 release traceability with BOM/build/exact-tier evidence, READY decision readback and idempotent replay. README and subprocess regression test added. Post-cleaner ./forge verify passed 171 tests at 90% coverage with Ruff/format/strict mypy/lock/pip; adversarial E2E and wheel smoke passed; independent code-reviewer APPROVE (0 issues) and architect CLEAR.",
+      "startedAt": "2026-08-30T10:30:01.085Z",
+      "completedAt": "2026-08-30T10:34:41.066Z"
     }
   ],
   "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
