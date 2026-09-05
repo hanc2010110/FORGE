@@ -1,0 +1,8 @@
+{
+  "children": [
+    {
+      "title": "Consolidate resolved release quality gates",
+      "objective": "Consolidate the already completed G011 blocker resolution and the later G014/G015 final verification, adversarial QA, cleanup, independent APPROVE, and architect CLEAR evidence into the durable replacement for G007."
+    }
+  ]
+}

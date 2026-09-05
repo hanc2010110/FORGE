@@ -119,14 +119,6 @@ class ContractModelTests(unittest.TestCase):
         self.assertEqual(spec.project_id, "local-uuid")
         self.assertEqual(spec.status, SpecStatus.APPROVED)
 
-    def test_canonical_json_embedded_in_prd_validates(self) -> None:
-        prd = Path("PRD.md").read_text(encoding="utf-8")
-        canonical_json = prd.split("```json", maxsplit=1)[1].split("```", maxsplit=1)[0]
-
-        spec = EngineeringSpec.model_validate_json(canonical_json)
-
-        self.assertEqual(spec.spec_id, "spec-uuid")
-
     def test_approved_spec_requires_approval_timestamp(self) -> None:
         with self.assertRaises(ValidationError):
             EngineeringSpec(

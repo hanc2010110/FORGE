@@ -14,6 +14,7 @@ from forge_core.change_management import (
     ExternalArtifactRef,
     SourceSystem,
 )
+from forge_core.change_planning import AssetInputKind, PlannedChangeAction
 from forge_core.connectors import (
     ConnectorCaptureRequest,
     ConnectorRegistry,
@@ -35,12 +36,17 @@ from forge_core.release_persistence import RawReleaseEvidence
 from forge_core.release_readiness import FirmwareBuildEvidence, TestExecutionEvidence
 from forge_core.release_service import (
     AnalyzeChangeCommand,
+    AssetInputDraft,
     CaptureSnapshotCommand,
+    ComponentSpecificationDraft,
+    CreateChangePreviewCommand,
     CreateProjectCommand,
     EvaluateReleaseCommand,
     IngestReleaseEvidenceCommand,
     MutationContext,
+    PlannedComponentChangeDraft,
     ReleaseIntegrationService,
+    VerifyPlanCommand,
 )
 from forge_core.sqlite_store import SQLiteEvidenceStore
 
@@ -225,6 +231,81 @@ def _context(key: str, version: int | None) -> MutationContext:
     )
 
 
+def _component_quote(part_number: str, digit: str) -> QuoteSnapshot:
+    return QuoteSnapshot(
+        quote_id=f"quote-{part_number.lower()}",
+        part_number=part_number,
+        supplier="Demo Components",
+        region="KR",
+        currency="USD",
+        unit_price=Decimal("12.00") if digit == "1" else Decimal("13.50"),
+        minimum_quantity=1,
+        observed_at=NOW - timedelta(hours=2),
+        expires_at=NOW + timedelta(days=1),
+        shipping_included=True,
+        shipping_cost=None,
+        tax_included=True,
+        tax_cost=None,
+        source_url=f"https://supplier.example/{part_number}",
+        source_hash="sha256:" + digit * 64,
+    )
+
+
+def _preview_command(baseline: ConnectorSnapshot) -> CreateChangePreviewCommand:
+    current_board = next(
+        artifact
+        for artifact in baseline.artifacts
+        if artifact.artifact_id == "controller-board"
+    )
+    candidate_board = _artifact(
+        "controller-board",
+        ArtifactDomain.HARDWARE,
+        SourceSystem.PLM,
+        "board-12",
+        2,
+        NOW - timedelta(hours=1),
+    )
+    return CreateChangePreviewCommand(
+        scenario_id="fan-controller-board-replacement",
+        asset_input=AssetInputDraft(
+            asset_id="fan-controller-rig",
+            kind=AssetInputKind.PLM_SNAPSHOT,
+            source_system=SourceSystem.PLM,
+            source_locator="plm://controller-release-demo/fan-controller-rig",
+            source_revision=baseline.hardware_revision_id,
+            content_hash=baseline.artifacts[0].content_hash,
+            captured_at=baseline.captured_at,
+        ),
+        baseline_snapshot_id=baseline.snapshot_id,
+        proposed_hardware_revision_id="HW-12",
+        changes=(
+            PlannedComponentChangeDraft(
+                change_id="replace-controller-board",
+                action=PlannedChangeAction.REPLACE,
+                before=ComponentSpecificationDraft(
+                    component_id="controller-board",
+                    manufacturer="Demo Robotics",
+                    part_number="CTRL-BOARD-11",
+                    quantity=1,
+                    source_ref=current_board,
+                    interface_contract=_interface_contract(),
+                    quote=_component_quote("CTRL-BOARD-11", "1"),
+                ),
+                after=ComponentSpecificationDraft(
+                    component_id="controller-board",
+                    manufacturer="Demo Robotics",
+                    part_number="CTRL-BOARD-12",
+                    quantity=1,
+                    source_ref=candidate_board,
+                    interface_contract=_interface_contract(),
+                    quote=_component_quote("CTRL-BOARD-12", "2"),
+                ),
+                rationale=("supplier-eol",),
+            ),
+        ),
+    )
+
+
 def _cost_evidence(snapshot: ConnectorSnapshot) -> StoredCostEvaluation:
     bom = (BOMLine(part_number="FAN-120", quantity=2),)
     quote = QuoteSnapshot(
@@ -365,19 +446,34 @@ def run_release_demo(database_path: Path) -> dict[str, Any]:
             ),
             _context("snapshot-before", 1),
         )
+        baseline_record = store.get_connector_snapshot(PROJECT_ID, "snapshot-11")
+        planned = service.create_change_preview(
+            PROJECT_ID,
+            _preview_command(baseline_record.snapshot),
+            _context("preview-change", 2),
+        )
+        preview_hash = str(planned.payload["change_preview"]["preview_hash"])
         service.capture_snapshot(
             PROJECT_ID,
             _capture_command("after", "snapshot-12", "HW-12", NOW - timedelta(hours=1)),
-            _context("snapshot-after", 2),
+            _context("snapshot-after", 3),
         )
         analyzed = service.analyze_change(
             PROJECT_ID,
             AnalyzeChangeCommand(
                 from_snapshot_id="snapshot-11", to_snapshot_id="snapshot-12"
             ),
-            _context("analyze-change", 3),
+            _context("analyze-change", 4),
         )
         analysis_hash = str(analyzed.payload["change_assessment"]["analysis_hash"])
+        verified = service.verify_plan(
+            PROJECT_ID,
+            VerifyPlanCommand(
+                preview_hash=preview_hash,
+                actual_change_analysis_hash=analysis_hash,
+            ),
+            _context("verify-plan", 5),
+        )
         assessment_record = store.get_change_assessment(analysis_hash)
         snapshot_record = store.get_connector_snapshot(PROJECT_ID, "snapshot-12")
         evidence: tuple[RawReleaseEvidence, ...] = (
@@ -385,7 +481,7 @@ def run_release_demo(database_path: Path) -> dict[str, Any]:
             _build_evidence(assessment_record.assessment, snapshot_record.snapshot),
             *_test_evidence(assessment_record.assessment, snapshot_record.snapshot),
         )
-        version = 4
+        version = verified.project_version
         evidence_ids: list[str] = []
         for index, item in enumerate(evidence, start=1):
             ingested = service.ingest_release_evidence(
@@ -423,6 +519,8 @@ def run_release_demo(database_path: Path) -> dict[str, Any]:
                 "replaces_source_systems": False,
                 "connected_systems": ["PLM", "Git", "CI", "supplier evidence"],
             },
+            "plan": planned.payload["change_preview"],
+            "verify": verified.payload["plan_verification"],
             "trace": {
                 "project_id": PROJECT_ID,
                 "hardware_revision": {"from": "HW-11", "to": "HW-12"},

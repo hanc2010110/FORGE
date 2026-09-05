@@ -28,6 +28,20 @@ class ReleaseDemoTests(unittest.TestCase):
             payload["trace"]["hardware_revision"],
             {"from": "HW-11", "to": "HW-12"},
         )
+        self.assertEqual(
+            payload["plan"]["preview"]["recommendation"], "changes_required"
+        )
+        self.assertEqual(
+            payload["plan"]["scenario"]["baseline_snapshot_id"], "snapshot-11"
+        )
+        self.assertEqual(
+            payload["verify"]["verification"]["preview_hash"],
+            payload["plan"]["preview_hash"],
+        )
+        self.assertEqual(
+            payload["verify"]["verification"]["actual_change_analysis_hash"],
+            payload["trace"]["analysis_hash"],
+        )
         self.assertIn("hardware", payload["trace"]["changed_domains"])
         self.assertTrue(payload["trace"]["required_retests"])
         self.assertTrue(payload["trace"]["ingested_evidence_ids"])

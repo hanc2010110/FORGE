@@ -11,22 +11,58 @@ from tempfile import TemporaryDirectory
 
 from pydantic import ValidationError
 
+from forge_core.access_control import (  # noqa: E402
+    Actor,
+    AuthorizationRequest,
+    Permission,
+    Role,
+    authorize,
+    build_audit_event,
+)
 from forge_core.constraints import BOMLine, QuoteSnapshot, evaluate_cost  # noqa: E402
+from forge_core.conversational_design import (  # noqa: E402
+    ClaimConfidence,
+    DesignConversationState,
+    DesignStateTransition,
+    EvidenceClaimKind,
+    build_evidence_claim,
+)
+from forge_core.conversational_persistence import (  # noqa: E402
+    StoredDesignStateTransition,
+    StoredEvidenceClaim,
+)
 from forge_core.design import (  # noqa: E402
     ArtifactKind,
     EvidenceClass,
     EvidenceRecord,
+    RevisionArtifact,
+    SystemDesignRevision,
     dependency_hash,
+    revision_hash,
 )
 from forge_core.hashing import canonical_sha256  # noqa: E402
 from forge_core.models import (  # noqa: E402
+    AnalysisResult,
     AnalysisRunRecord,
+    ApprovalRef,
+    ApprovalSubjectKind,
     EngineeringSpec,
+    PluginRef,
+    PreflightResult,
+    PreparedAnalysis,
+    PreparedAnalysisBinding,
+    Quantity,
+    Requirement,
+    RequirementPriority,
     RunLifecycleStatus,
+    RunManifest,
     RunStateEvent,
+    RunStatus,
+    SourceRef,
     SpecStatus,
     Verdict,
     VerificationBundle,
+    VerificationResult,
 )
 from forge_core.persistence import (  # noqa: E402
     CorruptRecordError,
@@ -49,16 +85,186 @@ from forge_core.release_readiness import (  # noqa: E402
     DEFAULT_RELEASE_READINESS_POLICY,
 )
 from forge_core.sqlite_store import (  # noqa: E402
+    LOCAL_BOOTSTRAP_ACTOR_ID,
+    LOCAL_BOOTSTRAP_ORG_ID,
     AtomicProjectWrite,
     SQLiteEvidenceStore,
 )
-from plugins.fake import FakePhysicsPlugin  # noqa: E402
-from tests.test_engine import (
-    approval_for,
-    engine_for,
-    make_revision,
-    make_spec,
+
+PLUGIN = PluginRef(
+    plugin_id="historical.fixture",
+    plugin_version="1.0.0",
+    schema_version="1.0.0",
+    artifact_hash="sha256:" + "3" * 64,
 )
+
+
+def quantity(value: float) -> Quantity:
+    return Quantity(
+        value=value,
+        unit="1",
+        dimension="ratio",
+        source=SourceRef(kind="user", identifier="test:persistence"),
+    )
+
+
+def make_spec() -> EngineeringSpec:
+    return EngineeringSpec(
+        project_id="project-1",
+        spec_id="spec-1",
+        spec_version=1,
+        status=SpecStatus.APPROVED,
+        intent="historical immutable analysis record",
+        model=PLUGIN,
+        parameters={"input_value": quantity(2.0)},
+        requirements=(
+            Requirement(
+                id="minimum_score",
+                metric="fixture_score",
+                operator=">=",
+                target=quantity(4.0),
+                priority=RequirementPriority.REQUIRED,
+            ),
+        ),
+        approved_at=datetime(2026, 8, 27, tzinfo=UTC),
+    )
+
+
+def make_revision(number: int = 1) -> SystemDesignRevision:
+    required = (
+        ArtifactKind.SYSTEM_SPEC,
+        ArtifactKind.INTERFACE,
+        ArtifactKind.BOM,
+        ArtifactKind.BUDGET_POLICY,
+    )
+    return SystemDesignRevision(
+        project_id="project-1",
+        revision_id=f"revision-{number}",
+        revision_number=number,
+        parent_revision_id="revision-1" if number > 1 else None,
+        approved_at=datetime(2026, 8, 27, tzinfo=UTC),
+        artifacts=tuple(
+            RevisionArtifact(
+                artifact_id=f"artifact:{item.value}",
+                kind=item,
+                version=str(number),
+                content_hash=f"sha256:{number:064x}",
+            )
+            for item in required
+        ),
+    )
+
+
+def approval_for(
+    spec: EngineeringSpec,
+    *,
+    revision: SystemDesignRevision | None = None,
+) -> tuple[ApprovalRef, ...]:
+    assert spec.approved_at is not None
+    approvals = [
+        ApprovalRef(
+            approval_id=f"approval:{spec.spec_id}:{spec.spec_version}",
+            subject_kind=ApprovalSubjectKind.ENGINEERING_SPEC,
+            project_id=spec.project_id,
+            subject_id=spec.spec_id,
+            subject_version=spec.spec_version,
+            subject_hash=canonical_sha256(spec),
+            approved_by="local-user",
+            approved_at=spec.approved_at,
+        )
+    ]
+    if revision is not None:
+        approvals.append(
+            ApprovalRef(
+                approval_id=f"approval:{revision.revision_id}",
+                subject_kind=ApprovalSubjectKind.SYSTEM_DESIGN_REVISION,
+                project_id=revision.project_id,
+                subject_id=revision.revision_id,
+                subject_version=revision.revision_number,
+                subject_hash=revision_hash(revision),
+                approved_by="local-user",
+                approved_at=revision.approved_at,
+            )
+        )
+    return tuple(approvals)
+
+
+def make_prepared(
+    spec: EngineeringSpec,
+    approval_refs: tuple[ApprovalRef, ...],
+    *,
+    preparation_id: str,
+    revision: SystemDesignRevision | None = None,
+) -> PreparedAnalysis:
+    binding = PreparedAnalysisBinding(
+        project_id=spec.project_id,
+        spec_id=spec.spec_id,
+        spec_version=spec.spec_version,
+        spec_hash=canonical_sha256(spec),
+        revision_id=None if revision is None else revision.revision_id,
+        revision_hash=None if revision is None else revision_hash(revision),
+        revision_number=None if revision is None else revision.revision_number,
+        engine_version="historical-fixture-1",
+        policy_version="historical-policy-1",
+        plugin=PLUGIN,
+        input_hash=canonical_sha256(spec),
+        expected_requirement_ids=tuple(item.id for item in spec.requirements),
+        expected_metrics=tuple(item.metric for item in spec.requirements),
+        approval_refs=approval_refs,
+        preflight=PreflightResult(
+            spec_id=spec.spec_id,
+            spec_version=spec.spec_version,
+            accepted=True,
+        ),
+    )
+    return PreparedAnalysis(
+        preparation_id=preparation_id,
+        binding=binding,
+        prepare_hash=canonical_sha256(binding),
+    )
+
+
+def successful_run(
+    run_id: str, prepared: PreparedAnalysis
+) -> tuple[AnalysisRunRecord, VerificationBundle]:
+    observed = quantity(4.0)
+    target = quantity(4.0)
+    result = AnalysisResult(
+        outputs={"fixture_score": observed},
+        formula_id="historical.fixture",
+        formula_version="1.0.0",
+    )
+    verification = VerificationResult(
+        requirement_id="minimum_score",
+        priority=RequirementPriority.REQUIRED,
+        status=Verdict.PASS,
+        observed=observed,
+        target=target,
+        margin=0.0,
+        evidence_refs=("analysis:fixture_score",),
+    )
+    bundle = VerificationBundle(results=(verification,), overall_verdict=Verdict.PASS)
+    manifest = RunManifest(
+        spec_hash=prepared.binding.spec_hash,
+        plugin_id=prepared.binding.plugin.plugin_id,
+        plugin_version=prepared.binding.plugin.plugin_version,
+        plugin_schema_version=prepared.binding.plugin.schema_version,
+        plugin_artifact_hash=prepared.binding.plugin.artifact_hash,
+        engine_version=prepared.binding.engine_version,
+        policy_version=prepared.binding.policy_version,
+        input_hash=prepared.binding.input_hash,
+        output_hash=canonical_sha256(result),
+        verification_hash=canonical_sha256(bundle),
+    )
+    return (
+        AnalysisRunRecord(
+            run_id=run_id,
+            status=RunStatus.SUCCEEDED,
+            analysis_result=result,
+            manifest=manifest,
+        ),
+        bundle,
+    )
 
 
 class SQLiteEvidenceStoreTests(unittest.TestCase):
@@ -75,15 +281,11 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             created_at=self.base,
             updated_at=self.base,
         )
-        plugin = FakePhysicsPlugin()
-        self.engine, registration = engine_for(plugin)
-        self.plugin = plugin
-        self.spec = make_spec(registration=registration)
+        self.spec = make_spec()
         self.spec_approval = approval_for(self.spec)[0]
-        self.prepared = self.engine.prepare(
+        self.prepared = make_prepared(
             self.spec,
-            self.plugin,
-            approval_refs=(self.spec_approval,),
+            (self.spec_approval,),
             preparation_id="preparation-1",
         )
 
@@ -158,9 +360,24 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             )
         return version
 
+    def _drop_access_control_schema(self, connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE cad_geometry_assets")
+        connection.execute("DROP TABLE conversation_runtime_results")
+        connection.execute("DROP TABLE knowledge_sources")
+        connection.execute("DROP TABLE audit_events")
+        connection.execute("DROP TABLE project_access")
+        connection.execute("DROP TABLE memberships")
+        connection.execute("DROP TABLE actors")
+        connection.execute("DROP TABLE organizations")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 9")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 8")
+
     def test_schema_initialization_pragmas_reopen_and_newer_rejection(self) -> None:
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
             self.assertEqual(
                 connection.execute("PRAGMA journal_mode").fetchone()[0], "wal"
             )
@@ -168,23 +385,54 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0],
-                3,
+                10,
             )
         reopened = SQLiteEvidenceStore(self.path)
         reopened.create_project(self.project)
         self.assertEqual(reopened.get_project("project-1"), self.project)
+        self.assertEqual(
+            reopened.get_actor(LOCAL_BOOTSTRAP_ACTOR_ID).display_name,
+            "Local Operator",
+        )
+        self.assertEqual(
+            reopened.get_membership(
+                LOCAL_BOOTSTRAP_ORG_ID, LOCAL_BOOTSTRAP_ACTOR_ID
+            ).role,
+            Role.ADMIN,
+        )
+        self.assertTrue(
+            reopened.get_project_access(
+                LOCAL_BOOTSTRAP_ORG_ID,
+                "project-1",
+                LOCAL_BOOTSTRAP_ACTOR_ID,
+            ).active
+        )
 
         newer = Path(self.temporary.name) / "newer.db"
         with sqlite3.connect(newer) as connection:
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute("PRAGMA user_version = 11")
         with self.assertRaises(MigrationError):
             SQLiteEvidenceStore(newer)
         with sqlite3.connect(newer) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 11
+            )
 
-    def test_schema_v1_is_migrated_to_v3_without_losing_records(self) -> None:
+    def test_schema_v1_is_migrated_to_v7_without_losing_records(self) -> None:
         self.store.create_project(self.project)
         with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DROP TABLE resolution_plans")
+            connection.execute("DROP TABLE release_diagnoses")
+            connection.execute("DROP TABLE design_proposals")
+            connection.execute("DROP TABLE external_evidence_plan_verifications")
+            connection.execute("DROP TABLE external_evidence_plans")
+            connection.execute("DROP TABLE plan_verifications")
+            connection.execute("DROP TABLE change_previews")
             connection.execute("DROP TABLE release_decisions")
             connection.execute("DROP TABLE release_evidence")
             connection.execute("DROP TABLE change_assessments")
@@ -193,6 +441,10 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             connection.execute("DROP TABLE cost_evaluations")
             connection.execute("DROP TABLE spec_state_events")
             connection.execute("DROP TABLE approved_specs")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 4")
             connection.execute("DELETE FROM schema_migrations WHERE version = 3")
             connection.execute("DELETE FROM schema_migrations WHERE version = 2")
             connection.execute("PRAGMA user_version = 1")
@@ -206,8 +458,23 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
             canonical_sha256(DEFAULT_RELEASE_READINESS_POLICY),
         )
         self.assertEqual(migrated_policy.stored_at, self.project.created_at)
+        self.assertEqual(
+            migrated.get_membership(
+                LOCAL_BOOTSTRAP_ORG_ID, LOCAL_BOOTSTRAP_ACTOR_ID
+            ).role,
+            Role.ADMIN,
+        )
+        self.assertTrue(
+            migrated.get_project_access(
+                LOCAL_BOOTSTRAP_ORG_ID,
+                self.project.project_id,
+                LOCAL_BOOTSTRAP_ACTOR_ID,
+            ).active
+        )
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
             tables = {
                 row[0]
                 for row in connection.execute(
@@ -224,18 +491,53 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 "release_evidence",
                 "release_decisions",
                 "release_policies",
+                "change_previews",
+                "plan_verifications",
+                "external_evidence_plans",
+                "external_evidence_plan_verifications",
+                "design_proposals",
+                "design_candidates",
+                "simulation_bindings",
+                "conversational_evidence_claims",
+                "design_state_transitions",
+                "release_diagnoses",
+                "resolution_plans",
+                "organizations",
+                "actors",
+                "memberships",
+                "project_access",
+                "audit_events",
+                "knowledge_sources",
+                "conversation_runtime_results",
+                "cad_geometry_assets",
             }
             <= tables
         )
 
-    def test_schema_v2_is_migrated_to_v3_without_losing_records(self) -> None:
+    def test_schema_v2_is_migrated_to_v7_without_losing_records(self) -> None:
         self.store.create_project(self.project)
         with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DROP TABLE resolution_plans")
+            connection.execute("DROP TABLE release_diagnoses")
+            connection.execute("DROP TABLE design_proposals")
+            connection.execute("DROP TABLE external_evidence_plan_verifications")
+            connection.execute("DROP TABLE external_evidence_plans")
+            connection.execute("DROP TABLE plan_verifications")
+            connection.execute("DROP TABLE change_previews")
             connection.execute("DROP TABLE release_decisions")
             connection.execute("DROP TABLE release_evidence")
             connection.execute("DROP TABLE change_assessments")
             connection.execute("DROP TABLE connector_snapshots")
             connection.execute("DROP TABLE release_policies")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 4")
             connection.execute("DELETE FROM schema_migrations WHERE version = 3")
             connection.execute("PRAGMA user_version = 2")
 
@@ -250,13 +552,338 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         self.assertEqual(migrated_policy.stored_at, self.project.created_at)
         with sqlite3.connect(self.path) as connection:
-            self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
             self.assertEqual(
                 connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0],
-                3,
+                10,
             )
+
+    def test_schema_v3_is_migrated_to_v7_without_losing_records(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DROP TABLE resolution_plans")
+            connection.execute("DROP TABLE release_diagnoses")
+            connection.execute("DROP TABLE design_proposals")
+            connection.execute("DROP TABLE external_evidence_plan_verifications")
+            connection.execute("DROP TABLE external_evidence_plans")
+            connection.execute("DROP TABLE plan_verifications")
+            connection.execute("DROP TABLE change_previews")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 4")
+            connection.execute("PRAGMA user_version = 3")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        self.assertEqual(migrated.list_change_previews(self.project.project_id), ())
+        self.assertEqual(migrated.list_plan_verifications(self.project.project_id), ())
+        self.assertEqual(
+            migrated.list_external_evidence_plans(self.project.project_id), ()
+        )
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v4_is_migrated_to_v7_without_losing_records(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DROP TABLE resolution_plans")
+            connection.execute("DROP TABLE release_diagnoses")
+            connection.execute("DROP TABLE design_proposals")
+            connection.execute("DROP TABLE external_evidence_plan_verifications")
+            connection.execute("DROP TABLE external_evidence_plans")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 5")
+            connection.execute("PRAGMA user_version = 4")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        self.assertEqual(
+            migrated.list_external_evidence_plans(self.project.project_id), ()
+        )
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v5_is_migrated_to_v7_with_empty_resolution_ledgers(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DROP TABLE resolution_plans")
+            connection.execute("DROP TABLE release_diagnoses")
+            connection.execute("DROP TABLE design_proposals")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 6")
+            connection.execute("PRAGMA user_version = 5")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        self.assertEqual(migrated.list_design_proposals(self.project.project_id), ())
+        self.assertEqual(migrated.list_design_candidates(self.project.project_id), ())
+        self.assertEqual(migrated.list_simulation_bindings(self.project.project_id), ())
+        self.assertEqual(migrated.list_evidence_claims(self.project.project_id), ())
+        self.assertEqual(
+            migrated.list_design_state_transitions(
+                self.project.project_id, "session-1"
+            ),
+            (),
+        )
+        self.assertEqual(migrated.list_release_diagnoses(self.project.project_id), ())
+        self.assertEqual(migrated.list_resolution_plans(self.project.project_id), ())
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v6_is_migrated_to_v7_with_empty_conversation_ledgers(
+        self,
+    ) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("DROP TABLE design_state_transitions")
+            connection.execute("DROP TABLE conversational_evidence_claims")
+            connection.execute("DROP TABLE simulation_bindings")
+            connection.execute("DROP TABLE design_candidates")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 7")
+            connection.execute("PRAGMA user_version = 6")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        self.assertEqual(migrated.list_design_candidates("project-1"), ())
+        self.assertEqual(migrated.list_simulation_bindings("project-1"), ())
+        self.assertEqual(migrated.list_evidence_claims("project-1"), ())
+        self.assertEqual(
+            migrated.list_design_state_transitions("project-1", "session-1"), ()
+        )
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v7_is_migrated_to_v8_with_local_access_bootstrap(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            self._drop_access_control_schema(connection)
+            connection.execute("PRAGMA user_version = 7")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.get_project(self.project.project_id), self.project)
+        self.assertEqual(
+            migrated.get_organization(LOCAL_BOOTSTRAP_ORG_ID).name,
+            "Local FORGE Workspace",
+        )
+        self.assertEqual(
+            migrated.get_actor(LOCAL_BOOTSTRAP_ACTOR_ID).display_name,
+            "Local Operator",
+        )
+        self.assertEqual(
+            migrated.get_membership(
+                LOCAL_BOOTSTRAP_ORG_ID, LOCAL_BOOTSTRAP_ACTOR_ID
+            ).role,
+            Role.ADMIN,
+        )
+        self.assertTrue(
+            migrated.get_project_access(
+                LOCAL_BOOTSTRAP_ORG_ID,
+                self.project.project_id,
+                LOCAL_BOOTSTRAP_ACTOR_ID,
+            ).active
+        )
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v8_is_migrated_to_v9_with_empty_local_rag_ledgers(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE cad_geometry_assets")
+            connection.execute("DROP TABLE conversation_runtime_results")
+            connection.execute("DROP TABLE knowledge_sources")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 9")
+            connection.execute("PRAGMA user_version = 8")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.list_knowledge_sources("project-1"), ())
+        self.assertEqual(migrated.list_runtime_results("project-1"), ())
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_schema_v9_is_migrated_to_v10_with_empty_cad_geometry_ledger(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE cad_geometry_assets")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+            connection.execute("PRAGMA user_version = 9")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.list_cad_geometries("project-1"), ())
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 10
+            )
+
+    def test_access_control_records_and_audit_events_are_persisted(self) -> None:
+        self.store.create_project(self.project)
+        actor = self.store.get_actor(LOCAL_BOOTSTRAP_ACTOR_ID)
+        membership = self.store.get_membership(
+            LOCAL_BOOTSTRAP_ORG_ID, LOCAL_BOOTSTRAP_ACTOR_ID
+        )
+        project_access = self.store.get_project_access(
+            LOCAL_BOOTSTRAP_ORG_ID, self.project.project_id, LOCAL_BOOTSTRAP_ACTOR_ID
+        )
+        request = AuthorizationRequest(
+            org_id=LOCAL_BOOTSTRAP_ORG_ID,
+            project_id=self.project.project_id,
+            actor_id=LOCAL_BOOTSTRAP_ACTOR_ID,
+            permission=Permission.DECIDE_RELEASE,
+        )
+        result = authorize(
+            actor=actor,
+            membership=membership,
+            project_access=project_access,
+            request=request,
+        )
+        event = build_audit_event(
+            event_id="audit-1",
+            request=request,
+            result=result,
+            occurred_at=self.base,
+        )
+
+        self.assertTrue(result.allowed)
+        self.assertEqual(self.store.append_audit_event(event), event)
+        self.assertEqual(self.store.get_audit_event("audit-1"), event)
+        self.assertEqual(
+            self.store.list_audit_events(self.project.project_id), (event,)
+        )
+        self.assertEqual(self.store.append_audit_event(event), event)
+        self.assertEqual(len(self.store.list_audit_events(self.project.project_id)), 1)
+        conflict = build_audit_event(
+            event_id="audit-1",
+            request=request.model_copy(update={"permission": Permission.READ_PROJECT}),
+            result=result.model_copy(update={"permission": Permission.READ_PROJECT}),
+            occurred_at=self.base,
+        )
+        with self.assertRaises(IntegrityConflictError):
+            self.store.append_audit_event(conflict)
+        export_payload = json.loads(self.store.export_project("project-1").content)
+        export_paths = {entry["path"] for entry in export_payload["entries"]}
+        self.assertIn("audit-events/audit-1.json", export_paths)
+
+        inactive = Actor(
+            actor_id=LOCAL_BOOTSTRAP_ACTOR_ID,
+            display_name="Local Operator",
+            active=False,
+        )
+        self.store.insert_actor(inactive)
+        self.assertFalse(self.store.get_actor(LOCAL_BOOTSTRAP_ACTOR_ID).active)
+
+    def test_conversational_evidence_claims_and_state_transitions_are_persisted(
+        self,
+    ) -> None:
+        self.store.create_project(self.project)
+        claim = build_evidence_claim(
+            claim_id="claim-1",
+            kind=EvidenceClaimKind.INFERRED,
+            statement=(
+                "Upper arm extension needs physical device evidence before release."
+            ),
+            evidence_refs=("design-candidate:dc-014",),
+            confidence=ClaimConfidence.MEDIUM,
+        )
+        version = self.store.store_evidence_claim(
+            StoredEvidenceClaim(
+                project_id="project-1",
+                session_id="session-1",
+                claim_hash=claim.claim_hash,
+                claim_id=claim.claim_id,
+                claim=claim,
+                stored_at=self.base + timedelta(minutes=1),
+            ),
+            expected_project_version=1,
+        )
+        transition = DesignStateTransition(
+            session_id="session-1",
+            sequence=1,
+            from_state=DesignConversationState.IDEA,
+            to_state=DesignConversationState.PROPOSED,
+            occurred_at=self.base + timedelta(minutes=2),
+        )
+        version = self.store.append_design_state_transition(
+            StoredDesignStateTransition(
+                project_id="project-1",
+                session_id=transition.session_id,
+                sequence=transition.sequence,
+                transition_hash=canonical_sha256(transition),
+                from_state=transition.from_state,
+                to_state=transition.to_state,
+                candidate_hash=transition.candidate_hash,
+                simulation_hash=transition.simulation_hash,
+                transition=transition,
+                stored_at=self.base + timedelta(minutes=3),
+            ),
+            expected_project_version=version,
+        )
+
+        self.assertEqual(version, 3)
+        self.assertEqual(self.store.get_evidence_claim(claim.claim_hash).claim, claim)
+        self.assertEqual(
+            self.store.list_evidence_claims("project-1")[0].claim_hash,
+            claim.claim_hash,
+        )
+        self.assertEqual(
+            self.store.list_design_state_transitions("project-1", "session-1")[0],
+            StoredDesignStateTransition(
+                project_id="project-1",
+                session_id=transition.session_id,
+                sequence=transition.sequence,
+                transition_hash=canonical_sha256(transition),
+                from_state=transition.from_state,
+                to_state=transition.to_state,
+                candidate_hash=None,
+                simulation_hash=None,
+                transition=transition,
+                stored_at=self.base + timedelta(minutes=3),
+            ),
+        )
+        export_payload = json.loads(self.store.export_project("project-1").content)
+        export_paths = {entry["path"] for entry in export_payload["entries"]}
+        self.assertIn(f"evidence-claims/{claim.claim_hash}.json", export_paths)
+        self.assertIn("design-state-transitions/session-1-1.json", export_paths)
 
     def test_migration_history_corruption_is_rejected(self) -> None:
         with sqlite3.connect(self.path) as connection:
@@ -460,10 +1087,9 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         with self.assertRaises(IntegrityConflictError):
             self.store.store_approval(approvals[1], expected_project_version=version)
 
-        prepared = self.engine.prepare(
+        prepared = make_prepared(
             self.spec,
-            self.plugin,
-            approval_refs=approvals,
+            approvals,
             revision=revision,
             preparation_id="revision-preparation",
         )
@@ -506,30 +1132,23 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertEqual(interrupted[0].run_id, "run-1")
         self.assertEqual(interrupted[0].project_version, version)
 
-        outcome = self.engine.execute_prepared(
-            self.prepared, self.spec, self.plugin, run_id="run-1"
-        )
-        assert outcome.run is not None
-        verification = VerificationBundle(
-            results=outcome.verifications,
-            overall_verdict=outcome.overall_verdict,
-        )
+        run_result, verification = successful_run("run-1", self.prepared)
         terminal = self._event(
             4,
             RunLifecycleStatus.RUNNING,
             RunLifecycleStatus.SUCCEEDED,
-            result=outcome.run,
+            result=run_result,
         )
         with self.assertRaises(IntegrityConflictError):
             self.store.append_run_event(terminal, expected_project_version=version)
         version = self.store.complete_run(
             terminal,
-            outcome.run,
+            run_result,
             verification,
             expected_project_version=version,
         )
         run = self.store.get_run("run-1")
-        self.assertEqual(run.result, outcome.run)
+        self.assertEqual(run.result, run_result)
         self.assertEqual(run.verification, verification)
         self.assertEqual(self.store.list_interrupted_runs(), ())
 
@@ -568,24 +1187,17 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
     def test_bad_terminal_result_rolls_back_event_and_version(self) -> None:
         version = self._store_running()
-        outcome = self.engine.execute_prepared(
-            self.prepared, self.spec, self.plugin, run_id="run-1"
-        )
-        assert outcome.run is not None
-        verification = VerificationBundle(
-            results=outcome.verifications,
-            overall_verdict=outcome.overall_verdict,
-        )
+        run_result, verification = successful_run("run-1", self.prepared)
         bad_event = self._event(
             4,
             RunLifecycleStatus.RUNNING,
             RunLifecycleStatus.SUCCEEDED,
-            result=outcome.run,
+            result=run_result,
         ).model_copy(update={"run_record_hash": "sha256:" + "0" * 64})
         with self.assertRaises(IntegrityConflictError):
             self.store.complete_run(
                 bad_event,
-                outcome.run,
+                run_result,
                 verification,
                 expected_project_version=version,
             )

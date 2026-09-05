@@ -260,6 +260,11 @@ class ConnectorRegistry:
         except KeyError as exc:
             raise KeyError("unknown connector adapter") from exc
 
+    def list_manifests(self) -> tuple[ReadOnlyAdapterManifest, ...]:
+        """Return configured read-only adapters in deterministic order."""
+
+        return tuple(self._manifests[key] for key in sorted(self._manifests))
+
     def capture(self, request: ConnectorCaptureRequest) -> ConnectorCaptureBundle:
         try:
             adapter = self._adapters[request.connector_id]

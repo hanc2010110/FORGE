@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-08-30T10:34:41.066Z",
+  "updatedAt": "2026-09-03T11:19:09.276Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -141,12 +141,32 @@
       "status": "review_blocked",
       "attempt": 1,
       "createdAt": "2026-08-27T12:28:53.182Z",
-      "updatedAt": "2026-08-30T10:29:53.213Z",
-      "steeringEvidence": "The new product promise is preventing engineering release omissions, so final quality must prove end-to-end traceability and conservative gating.",
-      "steeringRationale": "Final gates must validate the repositioned B2B release workflow rather than generic AI engineering capability.",
+      "updatedAt": "2026-08-31T12:02:14.120Z",
+      "steeringEvidence": "G011 resolved the G007 review blocker; G014 and G015 then completed the final operator workflow, cleanup, adversarial QA, 168-test verification, independent APPROVE, and architect CLEAR gates.",
+      "steeringRationale": "Supersede the stale review_blocked parent with one explicit consolidation story so the completed replacement evidence remains auditable without deleting or weakening G007.",
       "startedAt": "2026-08-29T12:57:32.501Z",
       "reviewBlockedAt": "2026-08-30T10:29:53.213Z",
-      "evidence": "Independent code-reviewer found one P2: ./forge dev still exposed FakePhysicsPlugin instead of the repositioned engineering release workflow. Fixed in forge_core/demo.py with README and tests/test_demo.py; fresh verification and final re-review required."
+      "evidence": "Independent code-reviewer found one P2: ./forge dev still exposed FakePhysicsPlugin instead of the repositioned engineering release workflow. Fixed in forge_core/demo.py with README and tests/test_demo.py; fresh verification and final re-review required.",
+      "steeringStatus": "superseded",
+      "blockedReason": "G011 is the explicit replacement story created to resolve G007, so the stale review_blocked parent is superseded by its completed replacement and later final-gate stories.",
+      "supersededBy": [
+        "G016-consolidate-resolved-release-quality"
+      ]
+    },
+    {
+      "id": "G016-consolidate-resolved-release-quality",
+      "title": "Consolidate resolved release quality gates",
+      "objective": "Consolidate the already completed G011 blocker resolution and the later G014/G015 final verification, adversarial QA, cleanup, independent APPROVE, and architect CLEAR evidence into the durable replacement for G007.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-31T12:02:14.120Z",
+      "updatedAt": "2026-08-31T12:02:36.867Z",
+      "evidence": "Consolidated completed G011/G014/G015 evidence: legacy fake demo removed, CONNECT/IMPORT→PLAN→VERIFY→RELEASE flow implemented, adversarial QA and slop cleanup passed, ./forge verify passed 168 tests and 90% coverage, independent code-review APPROVE with 0 findings, architect CLEAR.",
+      "supersedes": [
+        "G007-release-quality-gates"
+      ],
+      "startedAt": "2026-08-31T12:02:21.405Z",
+      "completedAt": "2026-08-31T12:02:36.867Z"
     },
     {
       "id": "G011-resolve-final-dev-entrypoint-review",
@@ -159,6 +179,126 @@
       "evidence": "Resolved the final dev-entrypoint review blocker: ./forge dev now persists and evaluates deterministic read-only HW-11 to HW-12 release traceability with BOM/build/exact-tier evidence, READY decision readback and idempotent replay. README and subprocess regression test added. Post-cleaner ./forge verify passed 171 tests at 90% coverage with Ruff/format/strict mypy/lock/pip; adversarial E2E and wheel smoke passed; independent code-reviewer APPROVE (0 issues) and architect CLEAR.",
       "startedAt": "2026-08-30T10:30:01.085Z",
       "completedAt": "2026-08-30T10:34:41.066Z"
+    },
+    {
+      "id": "G012-change-planning-contracts-and-produc",
+      "title": "Change planning contracts and product scope",
+      "objective": "Rebase FORGE around PLAN→VERIFY→RELEASE: define immutable candidate-part change scenarios and deterministic impact-preview contracts, update PRD/design terminology, and remove or de-emphasize product promises that conflict with a read-only engineering validation layer while preserving proven release-gate compatibility.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-30T10:47:12.601Z",
+      "updatedAt": "2026-08-30T11:01:23.136Z",
+      "evidence": "PRD v5 and DESIGN now define PLAN→VERIFY→RELEASE and remove device-control/general-solver promises; generic AnalysisEngine public export removed; immutable source-bound component/scenario/preview/verification contracts added with canonical hash and release-boundary validators; 23 targeted tests passed; Ruff and mypy passed.",
+      "startedAt": "2026-08-30T10:47:17.749Z",
+      "completedAt": "2026-08-30T11:01:23.136Z"
+    },
+    {
+      "id": "G013-deterministic-change-impact-preview",
+      "title": "Deterministic change impact preview workflow",
+      "objective": "Implement persisted project-scoped change scenarios, candidate-part compatibility comparison, predicted cross-artifact impacts, automatic predicted retests, plan-vs-actual verification, and secure loopback API routes with canonical hashes, idempotency, optimistic concurrency, migrations, and regression tests.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-30T10:47:12.818Z",
+      "updatedAt": "2026-08-30T11:19:46.622Z",
+      "evidence": "Implemented persisted deterministic change impact preview workflow: service-side draft materialization against stored baseline snapshot/hash, preview and plan-verification mutations/getters, loopback POST/GET routes, project scoping, stale If-Match and forged input tests; verified with ./forge verify passing 189 tests, lint, typecheck, lockcheck, 90% coverage.",
+      "startedAt": "2026-08-30T11:01:27.403Z",
+      "completedAt": "2026-08-30T11:19:46.622Z"
+    },
+    {
+      "id": "G014-plan-verify-release-operator-experie",
+      "title": "PLAN VERIFY RELEASE operator experience and final gates",
+      "objective": "Extend the operator interface into a coherent PLAN→VERIFY→RELEASE workflow that creates and renders planned component changes, predicted impacts and retests, compares actual revisions to the approved plan, and preserves evidence-based READY/BLOCKED reporting; then run cleanup, full verification, adversarial QA, independent code review, and architecture review.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-30T10:47:13.034Z",
+      "updatedAt": "2026-08-30T12:00:40.165Z",
+      "evidence": "G014 complete: independent code-review APPROVE with zero findings; architect CLEAR; ./forge verify passed Ruff, strict mypy across 39 source files, lock verification, pip check, 153 tests, and 90% coverage; browser desktop/mobile and adversarial QA passed; generic execution engine/plugin surface removed.",
+      "startedAt": "2026-08-30T11:19:51.532Z",
+      "completedAt": "2026-08-30T12:00:40.165Z"
+    },
+    {
+      "id": "G015-connected-product-intake-and-simulat",
+      "title": "Connected product intake and simulation scenarios",
+      "objective": "Add an operator-first intake flow that connects an existing robot or machine, imports CAD/design/source artifacts into a source-bound baseline, accepts either a desired component/design change or a simulation scenario, routes engineering change-impact simulation inside FORGE, routes physical/dynamic simulation to external evidence adapters, and preserves PLAN VERIFY RELEASE semantics without source-system write-back or device control.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-08-30T11:35:48.083Z",
+      "updatedAt": "2026-08-31T12:00:36.447Z",
+      "evidence": "Implemented source-bound robot/machine/CAD intake, component change preview, operating-scenario external evidence planning, immutable four-tier verification bindings, secure API/UI/persistence v5, exact plan-baseline-to-analysis binding, and no writeback/device-control paths. ./forge verify passed 168 tests with Ruff, strict mypy, lock/pip checks and 90% coverage; independent code-review APPROVE with 0 findings; architect CLEAR.",
+      "startedAt": "2026-08-30T12:00:51.482Z",
+      "completedAt": "2026-08-31T12:00:36.447Z"
+    },
+    {
+      "id": "G017-persistent-conversational-engineerin",
+      "title": "Persistent conversational engineering MVP hardening",
+      "objective": "Raise the conversational FORGE MVP to a credible 90% end-to-end completion by fixing direct-open UI failure, persisting immutable design candidates, simulation bindings, evidence claims and conversation transitions, exposing them through the secure loopback API, wiring the guided UI to server-backed state with honest offline/demo boundaries, and passing migrations, API, UI, browser, cleanup and independent review gates.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-01T11:14:54.488Z",
+      "updatedAt": "2026-09-01T12:08:37.915Z",
+      "evidence": "Fixed direct-open styling with an explicit safe file-preview mode; added immutable SQLite v7 candidate, simulation, claim and transition ledgers plus secure API routes; connected guided UI mutations with retry-safe server-backed state; validated claim and VERIFIED transition evidence by project/session in service and atomic storage; browser QA passed; ./forge verify passed 195 tests, strict mypy, Ruff, lock/pip checks and 90% coverage; independent code review APPROVE and architect CLEAR.",
+      "startedAt": "2026-09-01T11:14:58.297Z",
+      "completedAt": "2026-09-01T12:08:37.915Z"
+    },
+    {
+      "id": "G018-authorization-enforcement-and-audit",
+      "title": "Authorization enforcement and audit persistence",
+      "objective": "Integrate organization, actor, membership, project access, RBAC and append-only audit events into SQLite/service/loopback API so protected project operations fail closed and are queryable, with migrations and regression tests.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-03T09:57:26.665Z",
+      "updatedAt": "2026-09-03T10:11:19.937Z",
+      "evidence": "SQLite schema v8 persists orgs, actors, memberships, project access and append-only audit events; service/API enforce RBAC fail-closed with local bootstrap identity and queryable allowed/denied audit trail; ./forge verify passed 227 tests, Ruff, strict mypy, lock/pip checks and 90% coverage.",
+      "startedAt": "2026-09-03T09:57:35.177Z",
+      "completedAt": "2026-09-03T10:11:19.937Z"
+    },
+    {
+      "id": "G019-operational-health-backup-and-restor",
+      "title": "Operational health backup and restore",
+      "objective": "Implement deployment-test operational foundations: deep health/readiness reporting, safe SQLite backup with integrity verification, restore verification without destructive overwrite, and tests/documentation.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-03T09:57:26.874Z",
+      "updatedAt": "2026-09-03T10:18:38.445Z",
+      "evidence": "Added hash-bound SQLite operational health, integrity/schema/migration readiness endpoint, verified backup creation, SHA-256 verification and non-overwriting restore-to-new-database flow; ./forge verify passed 232 tests and 90% coverage with Ruff, strict mypy and lock checks.",
+      "startedAt": "2026-09-03T10:11:20.107Z",
+      "completedAt": "2026-09-03T10:18:38.445Z"
+    },
+    {
+      "id": "G020-local-source-grounded-rag-vertical-s",
+      "title": "Local source-grounded RAG vertical slice",
+      "objective": "Implement a no-network production-shaped local RAG vertical slice that ingests project-scoped text artifacts, retrieves deterministic cited chunks, invokes a bounded provider interface, persists runtime evidence where appropriate, and exposes a secure loopback API plus UI flow without granting release authority.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-03T09:57:27.087Z",
+      "updatedAt": "2026-09-03T10:33:22.765Z",
+      "evidence": "Implemented bounded project-scoped UTF-8 ingestion, deterministic lexical retrieval, no-network extractive provider, persisted runtime results, secure RBAC API routes, and chat UI citation flow without release authority; ./forge verify passed Ruff, strict mypy, lock/pip checks, 238 tests and 90% coverage.",
+      "startedAt": "2026-09-03T10:18:38.606Z",
+      "completedAt": "2026-09-03T10:33:22.765Z"
+    },
+    {
+      "id": "G021-stl-ingestion-and-contextual-3d-view",
+      "title": "STL ingestion and contextual 3D viewer",
+      "objective": "Implement safe ASCII/binary STL parsing with bounded resource validation, immutable artifact metadata and a dependency-free contextual 3D viewer path, preserving clear provenance and no CAD writeback; add tests and UI integration.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-03T09:57:27.300Z",
+      "updatedAt": "2026-09-03T10:43:47.585Z",
+      "evidence": "Implemented strict bounded ASCII/binary STL parsing, finite-coordinate and exact-length validation, source/content/geometry/asset hash contracts, SQLite v10 immutable persistence/export, RBAC-secured API upload/read paths, and dependency-free draggable canvas viewer in the chat workspace; ./forge verify passed 247 tests, Ruff, strict mypy, lock/pip checks and 90% coverage.",
+      "startedAt": "2026-09-03T10:33:22.924Z",
+      "completedAt": "2026-09-03T10:43:47.585Z"
+    },
+    {
+      "id": "G022-eighty-percent-pilot-integration-and",
+      "title": "Eighty-percent pilot integration and final gates",
+      "objective": "Integrate the new backend and chat-first frontend surfaces, update PRD/DESIGN/README status honestly, run full verification, browser responsive QA, cleanup and independent code/architecture review; quantify remaining production gaps without conflating coverage with product completion.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-03T09:57:27.513Z",
+      "updatedAt": "2026-09-03T11:19:09.276Z",
+      "evidence": "Integrated RBAC/audit, operational health/verified backup/non-overwrite restore, project-scoped cited local RAG with English/Korean release-authority guard and up to three source citations, bounded ASCII/binary STL persistence plus contextual 3D canvas, and GPT-style chat-first UX. README/PRD/DESIGN quantify local deployment-pilot completeness conservatively at about 80% and explicitly gate hosted LLM, STEP/SolidWorks/CAE/device/live enterprise connectors, SSO and multitenancy. Browser desktop/mobile/STL QA passed; ./forge verify passed Ruff, format, strict mypy, lock/pip, 250 tests and 90% coverage; independent code review APPROVE with zero findings and architect CLEAR.",
+      "startedAt": "2026-09-03T10:43:47.754Z",
+      "completedAt": "2026-09-03T11:19:09.276Z"
     }
   ],
   "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."

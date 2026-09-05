@@ -13,7 +13,22 @@ from typing import Any, NoReturn, TypeVar
 
 from pydantic import ValidationError
 
+from forge_core.access_control import (
+    Actor,
+    AuditEvent,
+    Membership,
+    Organization,
+    ProjectAccess,
+    Role,
+)
+from forge_core.cad_geometry import StoredCADGeometryAsset
 from forge_core.change_management import ArtifactDomain
+from forge_core.conversational_persistence import (
+    StoredDesignCandidate,
+    StoredDesignStateTransition,
+    StoredEvidenceClaim,
+    StoredSimulationBinding,
+)
 from forge_core.design import (
     ArtifactKind,
     EvidenceClass,
@@ -21,6 +36,7 @@ from forge_core.design import (
     dependency_hash,
 )
 from forge_core.hashing import canonical_sha256
+from forge_core.local_rag import StoredKnowledgeSource, StoredRuntimeResult
 from forge_core.models import (
     AnalysisRunRecord,
     ApprovalRef,
@@ -52,6 +68,12 @@ from forge_core.persistence import (
     StoredSpec,
     VersionConflictError,
 )
+from forge_core.planning_persistence import (
+    StoredChangeImpactPreview,
+    StoredExternalEvidencePlan,
+    StoredExternalEvidencePlanVerification,
+    StoredPlanVerification,
+)
 from forge_core.release_persistence import (
     StoredChangeImpactAssessment,
     StoredConnectorSnapshot,
@@ -65,10 +87,17 @@ from forge_core.release_readiness import (
     TestExecutionEvidence,
     cost_evidence_matches_policy,
 )
+from forge_core.resolution_persistence import (
+    StoredDesignProposalSet,
+    StoredReleaseDiagnosis,
+    StoredResolutionPlan,
+)
 
 ModelT = TypeVar("ModelT", bound=ContractModel)
 ResultT = TypeVar("ResultT")
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+LOCAL_BOOTSTRAP_ORG_ID = "local-org"
+LOCAL_BOOTSTRAP_ACTOR_ID = "local-operator"
 
 
 def _utc_text(value: datetime) -> str:
@@ -129,6 +158,7 @@ class AtomicProjectWrite:
             raise IntegrityConflictError("atomic write already created its project")
         self._require_project(project.project_id)
         self._store._insert_project(self._connection, project)
+        self._store._bootstrap_local_access_for_project(self._connection, project)
         self.created = True
 
     def delete_project(self) -> None:
@@ -224,6 +254,104 @@ class AtomicProjectWrite:
         self._require_project(record.project_id)
         self._store._append_release_decision(self._connection, record)
 
+    def insert_change_preview(self, record: StoredChangeImpactPreview) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_change_preview(self._connection, record)
+
+    def insert_plan_verification(self, record: StoredPlanVerification) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_plan_verification(self._connection, record)
+
+    def insert_external_evidence_plan(self, record: StoredExternalEvidencePlan) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_external_evidence_plan(self._connection, record)
+
+    def insert_external_evidence_plan_verification(
+        self, record: StoredExternalEvidencePlanVerification
+    ) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_external_evidence_plan_verification(
+            self._connection, record
+        )
+
+    def insert_design_proposal(self, record: StoredDesignProposalSet) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_design_proposal(self._connection, record)
+
+    def insert_release_diagnosis(self, record: StoredReleaseDiagnosis) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_release_diagnosis(self._connection, record)
+
+    def insert_resolution_plan(self, record: StoredResolutionPlan) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_resolution_plan(self._connection, record)
+
+    def insert_design_candidate(self, record: StoredDesignCandidate) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_design_candidate(self._connection, record)
+
+    def insert_simulation_binding(self, record: StoredSimulationBinding) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_simulation_binding(self._connection, record)
+
+    def insert_evidence_claim(self, record: StoredEvidenceClaim) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_evidence_claim(self._connection, record)
+
+    def append_design_state_transition(
+        self, record: StoredDesignStateTransition
+    ) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._append_design_state_transition(self._connection, record)
+
+    def insert_organization(self, record: Organization) -> None:
+        self._require_active()
+        self._store._put_organization(self._connection, record)
+
+    def insert_actor(self, record: Actor) -> None:
+        self._require_active()
+        self._store._put_actor(self._connection, record)
+
+    def insert_membership(self, record: Membership) -> None:
+        self._require_active()
+        self._store._put_membership(self._connection, record)
+
+    def insert_project_access(self, record: ProjectAccess) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._put_project_access(self._connection, record)
+
+    def append_audit_event(self, record: AuditEvent) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._append_audit_event(self._connection, record)
+
+    def insert_knowledge_source(self, record: StoredKnowledgeSource) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_knowledge_source(self._connection, record)
+
+    def insert_runtime_result(self, record: StoredRuntimeResult) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_runtime_result(self._connection, record)
+
+    def insert_cad_geometry(self, record: StoredCADGeometryAsset) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_cad_geometry(self._connection, record)
+
     def _require_active(self) -> None:
         if self.deleted:
             raise IntegrityConflictError("atomic write cannot mutate a deleted project")
@@ -238,7 +366,7 @@ class AtomicProjectWrite:
 class SQLiteEvidenceStore:
     """Short-transaction SQLite repository for immutable FORGE evidence."""
 
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 10
     BUSY_TIMEOUT_MS = 100
     RETRY_DELAYS = (0.025, 0.05, 0.1)
 
@@ -505,6 +633,151 @@ class SQLiteEvidenceStore:
                         REFERENCES connector_snapshots(project_id, snapshot_id)
                         ON DELETE CASCADE
                 );
+                CREATE TABLE change_previews(
+                    preview_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    scenario_hash TEXT NOT NULL UNIQUE,
+                    baseline_snapshot_id TEXT NOT NULL,
+                    baseline_snapshot_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, baseline_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE plan_verifications(
+                    verification_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    preview_hash TEXT NOT NULL
+                        REFERENCES change_previews(preview_hash) ON DELETE CASCADE,
+                    actual_change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    verified_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE external_evidence_plans(
+                    plan_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    scenario_hash TEXT NOT NULL UNIQUE,
+                    baseline_snapshot_id TEXT NOT NULL,
+                    baseline_snapshot_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, baseline_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE external_evidence_plan_verifications(
+                    verification_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    plan_hash TEXT NOT NULL
+                        REFERENCES external_evidence_plans(plan_hash)
+                        ON DELETE CASCADE,
+                    actual_change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash)
+                        ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    verified_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE design_proposals(
+                    proposal_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    preview_hash TEXT NOT NULL
+                        REFERENCES change_previews(preview_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE design_candidates(
+                    candidate_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK(revision >= 1),
+                    proposal_hash TEXT NOT NULL
+                        REFERENCES design_proposals(proposal_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    confirmed_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, candidate_id, revision),
+                    UNIQUE(project_id, candidate_hash)
+                );
+                CREATE TABLE simulation_bindings(
+                    simulation_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    simulation_id TEXT NOT NULL,
+                    candidate_hash TEXT NOT NULL
+                        REFERENCES design_candidates(candidate_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, simulation_id),
+                    UNIQUE(project_id, simulation_hash)
+                );
+                CREATE TABLE conversational_evidence_claims(
+                    claim_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    claim_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, claim_id)
+                );
+                CREATE TABLE design_state_transitions(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL CHECK(sequence >= 1),
+                    from_state TEXT NOT NULL,
+                    to_state TEXT NOT NULL,
+                    candidate_hash TEXT,
+                    simulation_hash TEXT,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, session_id, sequence),
+                    FOREIGN KEY(project_id, candidate_hash)
+                        REFERENCES design_candidates(project_id, candidate_hash)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(project_id, simulation_hash)
+                        REFERENCES simulation_bindings(project_id, simulation_hash)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE release_diagnoses(
+                    diagnosis_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    decision_hash TEXT NOT NULL
+                        REFERENCES release_decisions(decision_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE resolution_plans(
+                    plan_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    diagnosis_hash TEXT NOT NULL
+                        REFERENCES release_diagnoses(diagnosis_hash) ON DELETE CASCADE,
+                    fix_proposal_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    selected_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
                 CREATE TABLE release_evidence(
                     evidence_id TEXT NOT NULL,
                     project_id TEXT NOT NULL REFERENCES projects(project_id)
@@ -544,6 +817,83 @@ class SQLiteEvidenceStore:
                         REFERENCES connector_snapshots(project_id, snapshot_id)
                         ON DELETE CASCADE
                 );
+                CREATE TABLE organizations(
+                    org_id TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE actors(
+                    actor_id TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1))
+                );
+                CREATE TABLE memberships(
+                    org_id TEXT NOT NULL REFERENCES organizations(org_id)
+                        ON DELETE CASCADE,
+                    actor_id TEXT NOT NULL REFERENCES actors(actor_id)
+                        ON DELETE CASCADE,
+                    role TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    granted_at TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+                    PRIMARY KEY(org_id, actor_id)
+                );
+                CREATE TABLE project_access(
+                    org_id TEXT NOT NULL REFERENCES organizations(org_id)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    actor_id TEXT NOT NULL REFERENCES actors(actor_id)
+                        ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+                    PRIMARY KEY(org_id, project_id, actor_id)
+                );
+                CREATE INDEX project_access_by_actor
+                    ON project_access(actor_id, org_id, project_id);
+                CREATE TABLE audit_events(
+                    event_id TEXT PRIMARY KEY,
+                    event_hash TEXT NOT NULL UNIQUE,
+                    org_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    result_hash TEXT NOT NULL,
+                    allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+                    reason TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL
+                );
+                CREATE INDEX audit_events_by_project
+                    ON audit_events(project_id, occurred_at, event_id);
+                CREATE TABLE knowledge_sources(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    source_id TEXT NOT NULL,
+                    source_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, source_id)
+                );
+                CREATE TABLE conversation_runtime_results(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_id TEXT NOT NULL,
+                    runtime_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, request_id)
+                );
+                CREATE TABLE cad_geometry_assets(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    asset_id TEXT NOT NULL,
+                    asset_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, asset_id)
+                );
                 CREATE TABLE idempotency_records(
                     operation TEXT NOT NULL,
                     project_id TEXT NOT NULL,
@@ -560,7 +910,21 @@ class SQLiteEvidenceStore:
                     VALUES(2, '2026-08-29T00:00:00.000000Z');
                 INSERT INTO schema_migrations(version, applied_at)
                     VALUES(3, '2026-08-29T02:20:00.000000Z');
-                PRAGMA user_version = 3;
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(4, '2026-08-30T00:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(5, '2026-08-31T00:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(6, '2026-08-31T06:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(7, '2026-09-01T00:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(8, '2026-09-03T00:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(9, '2026-09-03T06:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(10, '2026-09-03T08:00:00.000000Z');
+                PRAGMA user_version = 10;
                 COMMIT;
                 """
             )
@@ -570,7 +934,7 @@ class SQLiteEvidenceStore:
             raise MigrationError("failed to initialize SQLite schema") from exc
 
     def _migrate(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in {1, 2}:
+        if version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
             raise MigrationError(f"no migration path from schema {version}")
         try:
             if version == 1:
@@ -726,6 +1090,320 @@ class SQLiteEvidenceStore:
                         ),
                     )
                 connection.commit()
+                version = 3
+            if version == 3:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE change_previews(
+                    preview_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    scenario_hash TEXT NOT NULL UNIQUE,
+                    baseline_snapshot_id TEXT NOT NULL,
+                    baseline_snapshot_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, baseline_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE plan_verifications(
+                    verification_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    preview_hash TEXT NOT NULL
+                        REFERENCES change_previews(preview_hash) ON DELETE CASCADE,
+                    actual_change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    verified_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(4, '2026-08-30T00:00:00.000000Z');
+                PRAGMA user_version = 4;
+                COMMIT;
+                """
+                )
+                version = 4
+            if version == 4:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE external_evidence_plans(
+                    plan_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    scenario_id TEXT NOT NULL,
+                    scenario_hash TEXT NOT NULL UNIQUE,
+                    baseline_snapshot_id TEXT NOT NULL,
+                    baseline_snapshot_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id, baseline_snapshot_id)
+                        REFERENCES connector_snapshots(project_id, snapshot_id)
+                        ON DELETE CASCADE
+                );
+                CREATE TABLE external_evidence_plan_verifications(
+                    verification_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    plan_hash TEXT NOT NULL
+                        REFERENCES external_evidence_plans(plan_hash)
+                        ON DELETE CASCADE,
+                    actual_change_analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash)
+                        ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    verified_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(5, '2026-08-31T00:00:00.000000Z');
+                PRAGMA user_version = 5;
+                COMMIT;
+                """
+                )
+                version = 5
+            if version == 5:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE design_proposals(
+                    proposal_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    preview_hash TEXT NOT NULL
+                        REFERENCES change_previews(preview_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE release_diagnoses(
+                    diagnosis_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    decision_hash TEXT NOT NULL
+                        REFERENCES release_decisions(decision_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE resolution_plans(
+                    plan_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    diagnosis_hash TEXT NOT NULL
+                        REFERENCES release_diagnoses(diagnosis_hash) ON DELETE CASCADE,
+                    fix_proposal_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    selected_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(6, '2026-08-31T06:00:00.000000Z');
+                PRAGMA user_version = 6;
+                COMMIT;
+                """
+                )
+                version = 6
+            if version == 6:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE design_candidates(
+                    candidate_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    candidate_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL CHECK(revision >= 1),
+                    proposal_hash TEXT NOT NULL
+                        REFERENCES design_proposals(proposal_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    confirmed_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, candidate_id, revision),
+                    UNIQUE(project_id, candidate_hash)
+                );
+                CREATE TABLE simulation_bindings(
+                    simulation_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    simulation_id TEXT NOT NULL,
+                    candidate_hash TEXT NOT NULL
+                        REFERENCES design_candidates(candidate_hash) ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, simulation_id),
+                    UNIQUE(project_id, simulation_hash)
+                );
+                CREATE TABLE conversational_evidence_claims(
+                    claim_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    claim_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    UNIQUE(project_id, claim_id)
+                );
+                CREATE TABLE design_state_transitions(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    session_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL CHECK(sequence >= 1),
+                    from_state TEXT NOT NULL,
+                    to_state TEXT NOT NULL,
+                    candidate_hash TEXT,
+                    simulation_hash TEXT,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, session_id, sequence),
+                    FOREIGN KEY(project_id, candidate_hash)
+                        REFERENCES design_candidates(project_id, candidate_hash)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(project_id, simulation_hash)
+                        REFERENCES simulation_bindings(project_id, simulation_hash)
+                        ON DELETE CASCADE
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(7, '2026-09-01T00:00:00.000000Z');
+                PRAGMA user_version = 7;
+                COMMIT;
+                """
+                )
+                version = 7
+            if version == 7:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE organizations(
+                    org_id TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE actors(
+                    actor_id TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1))
+                );
+                CREATE TABLE memberships(
+                    org_id TEXT NOT NULL REFERENCES organizations(org_id)
+                        ON DELETE CASCADE,
+                    actor_id TEXT NOT NULL REFERENCES actors(actor_id)
+                        ON DELETE CASCADE,
+                    role TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    granted_at TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+                    PRIMARY KEY(org_id, actor_id)
+                );
+                CREATE TABLE project_access(
+                    org_id TEXT NOT NULL REFERENCES organizations(org_id)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    actor_id TEXT NOT NULL REFERENCES actors(actor_id)
+                        ON DELETE CASCADE,
+                    payload_json TEXT NOT NULL,
+                    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+                    PRIMARY KEY(org_id, project_id, actor_id)
+                );
+                CREATE INDEX project_access_by_actor
+                    ON project_access(actor_id, org_id, project_id);
+                CREATE TABLE audit_events(
+                    event_id TEXT PRIMARY KEY,
+                    event_hash TEXT NOT NULL UNIQUE,
+                    org_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    result_hash TEXT NOT NULL,
+                    allowed INTEGER NOT NULL CHECK(allowed IN (0, 1)),
+                    reason TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL
+                );
+                CREATE INDEX audit_events_by_project
+                    ON audit_events(project_id, occurred_at, event_id);
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(8, '2026-09-03T00:00:00.000000Z');
+                PRAGMA user_version = 8;
+                """
+                )
+                projects = connection.execute(
+                    "SELECT * FROM projects ORDER BY project_id"
+                ).fetchall()
+                for row in projects:
+                    project = self._validate(
+                        ProjectRecord,
+                        {
+                            "project_id": row["project_id"],
+                            "name": row["name"],
+                            "version": row["version"],
+                            "created_at": row["created_at"],
+                            "updated_at": row["updated_at"],
+                        },
+                    )
+                    self._bootstrap_local_access_for_project(connection, project)
+                connection.commit()
+                version = 8
+            if version == 8:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE knowledge_sources(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    source_id TEXT NOT NULL,
+                    source_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, source_id)
+                );
+                CREATE TABLE conversation_runtime_results(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_id TEXT NOT NULL,
+                    runtime_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, request_id)
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(9, '2026-09-03T06:00:00.000000Z');
+                PRAGMA user_version = 9;
+                COMMIT;
+                """
+                )
+                version = 9
+            if version == 9:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE cad_geometry_assets(
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    asset_id TEXT NOT NULL,
+                    asset_hash TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    stored_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, asset_id)
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(10, '2026-09-03T08:00:00.000000Z');
+                PRAGMA user_version = 10;
+                COMMIT;
+                """
+                )
         except (sqlite3.Error, ValidationError, ValueError) as exc:
             with suppress(sqlite3.Error):
                 connection.rollback()
@@ -734,6 +1412,7 @@ class SQLiteEvidenceStore:
     def create_project(self, project: ProjectRecord) -> ProjectRecord:
         def insert(connection: sqlite3.Connection) -> ProjectRecord:
             self._insert_project(connection, project)
+            self._bootstrap_local_access_for_project(connection, project)
             return project
 
         return self._write(insert)
@@ -774,6 +1453,235 @@ class SQLiteEvidenceStore:
                 "updated_at": row["updated_at"],
             },
         )
+
+    @classmethod
+    def _bootstrap_local_access_for_project(
+        cls, connection: sqlite3.Connection, project: ProjectRecord
+    ) -> None:
+        organization = Organization(
+            org_id=LOCAL_BOOTSTRAP_ORG_ID,
+            name="Local FORGE Workspace",
+            created_at=project.created_at,
+        )
+        actor = Actor(
+            actor_id=LOCAL_BOOTSTRAP_ACTOR_ID,
+            display_name="Local Operator",
+            active=True,
+        )
+        membership = Membership(
+            org_id=organization.org_id,
+            actor_id=actor.actor_id,
+            role=Role.ADMIN,
+            granted_by=actor.actor_id,
+            granted_at=project.created_at,
+            active=True,
+        )
+        access = ProjectAccess(
+            org_id=organization.org_id,
+            project_id=project.project_id,
+            actor_id=actor.actor_id,
+            active=True,
+        )
+        cls._put_organization(connection, organization)
+        cls._put_actor(connection, actor)
+        cls._put_membership(connection, membership)
+        cls._put_project_access(connection, access)
+
+    def insert_organization(self, record: Organization) -> Organization:
+        def put(connection: sqlite3.Connection) -> Organization:
+            self._put_organization(connection, record)
+            return record
+
+        return self._write(put)
+
+    def get_organization(self, org_id: str) -> Organization:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM organizations WHERE org_id = ?", (org_id,)
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("organization not found")
+        return self._organization_from_row(row)
+
+    def insert_actor(self, record: Actor) -> Actor:
+        def put(connection: sqlite3.Connection) -> Actor:
+            self._put_actor(connection, record)
+            return record
+
+        return self._write(put)
+
+    def get_actor(self, actor_id: str) -> Actor:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM actors WHERE actor_id = ?", (actor_id,)
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("actor not found")
+        return self._actor_from_row(row)
+
+    def insert_membership(self, record: Membership) -> Membership:
+        def put(connection: sqlite3.Connection) -> Membership:
+            self._put_membership(connection, record)
+            return record
+
+        return self._write(put)
+
+    def get_membership(self, org_id: str, actor_id: str) -> Membership:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM memberships
+                WHERE org_id = ? AND actor_id = ?
+                """,
+                (org_id, actor_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("membership not found")
+        return self._membership_from_row(row)
+
+    def insert_project_access(self, record: ProjectAccess) -> ProjectAccess:
+        def put(connection: sqlite3.Connection) -> ProjectAccess:
+            self._put_project_access(connection, record)
+            return record
+
+        return self._write(put)
+
+    def get_project_access(
+        self, org_id: str, project_id: str, actor_id: str
+    ) -> ProjectAccess:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM project_access
+                WHERE org_id = ? AND project_id = ? AND actor_id = ?
+                """,
+                (org_id, project_id, actor_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("project access not found")
+        return self._project_access_from_row(row)
+
+    def append_audit_event(self, record: AuditEvent) -> AuditEvent:
+        def append(connection: sqlite3.Connection) -> AuditEvent:
+            self._append_audit_event(connection, record)
+            return record
+
+        return self._write(append)
+
+    def get_audit_event(self, event_id: str) -> AuditEvent:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM audit_events WHERE event_id = ?", (event_id,)
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("audit event not found")
+        return self._audit_event_from_row(row)
+
+    def list_audit_events(self, project_id: str) -> tuple[AuditEvent, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM audit_events
+                WHERE project_id = ? ORDER BY occurred_at, event_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._audit_event_from_row(row) for row in rows)
+
+    def insert_knowledge_source(
+        self, record: StoredKnowledgeSource
+    ) -> StoredKnowledgeSource:
+        def insert(connection: sqlite3.Connection) -> StoredKnowledgeSource:
+            self._insert_knowledge_source(connection, record)
+            return record
+
+        return self._write(insert)
+
+    def get_knowledge_source(
+        self, project_id: str, source_id: str
+    ) -> StoredKnowledgeSource:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_sources "
+                "WHERE project_id = ? AND source_id = ?",
+                (project_id, source_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("knowledge source not found")
+        return self._knowledge_source_from_row(row)
+
+    def list_knowledge_sources(
+        self, project_id: str
+    ) -> tuple[StoredKnowledgeSource, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                "SELECT * FROM knowledge_sources WHERE project_id = ? "
+                "ORDER BY stored_at, source_id",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._knowledge_source_from_row(row) for row in rows)
+
+    def insert_runtime_result(self, record: StoredRuntimeResult) -> StoredRuntimeResult:
+        def insert(connection: sqlite3.Connection) -> StoredRuntimeResult:
+            self._insert_runtime_result(connection, record)
+            return record
+
+        return self._write(insert)
+
+    def get_runtime_result(
+        self, project_id: str, request_id: str
+    ) -> StoredRuntimeResult:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM conversation_runtime_results "
+                "WHERE project_id = ? AND request_id = ?",
+                (project_id, request_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("conversation runtime result not found")
+        return self._runtime_result_from_row(row)
+
+    def list_runtime_results(self, project_id: str) -> tuple[StoredRuntimeResult, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                "SELECT * FROM conversation_runtime_results WHERE project_id = ? "
+                "ORDER BY stored_at, request_id",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._runtime_result_from_row(row) for row in rows)
+
+    def insert_cad_geometry(
+        self, record: StoredCADGeometryAsset
+    ) -> StoredCADGeometryAsset:
+        def insert(connection: sqlite3.Connection) -> StoredCADGeometryAsset:
+            self._insert_cad_geometry(connection, record)
+            return record
+
+        return self._write(insert)
+
+    def get_cad_geometry(
+        self, project_id: str, asset_id: str
+    ) -> StoredCADGeometryAsset:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM cad_geometry_assets "
+                "WHERE project_id = ? AND asset_id = ?",
+                (project_id, asset_id),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("CAD geometry asset not found")
+        return self._cad_geometry_from_row(row)
+
+    def list_cad_geometries(
+        self, project_id: str
+    ) -> tuple[StoredCADGeometryAsset, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                "SELECT * FROM cad_geometry_assets WHERE project_id = ? "
+                "ORDER BY stored_at, asset_id",
+                (project_id,),
+            ).fetchall()
+        return tuple(self._cad_geometry_from_row(row) for row in rows)
 
     def delete_project(self, project_id: str, *, expected_project_version: int) -> None:
         def delete(connection: sqlite3.Connection) -> None:
@@ -1859,6 +2767,863 @@ class SQLiteEvidenceStore:
             ).fetchall()
         return tuple(self._change_assessment_from_row(row) for row in rows)
 
+    def store_change_preview(
+        self, record: StoredChangeImpactPreview, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_change_preview(connection, record),
+        )
+
+    def _insert_change_preview(
+        self, connection: sqlite3.Connection, record: StoredChangeImpactPreview
+    ) -> None:
+        record = StoredChangeImpactPreview.model_validate(
+            record.model_dump(mode="python")
+        )
+        baseline_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, record.baseline_snapshot_id),
+        ).fetchone()
+        if baseline_row is None:
+            raise RecordNotFoundError("change preview baseline snapshot not found")
+        baseline = self._connector_snapshot_from_row(baseline_row)
+        if baseline.snapshot_hash != record.baseline_snapshot_hash:
+            raise IntegrityConflictError(
+                "change preview does not bind its stored baseline snapshot"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO change_previews VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.preview_hash,
+                record.project_id,
+                record.scenario_id,
+                record.scenario_hash,
+                record.baseline_snapshot_id,
+                record.baseline_snapshot_hash,
+                _canonical_model(record),
+                _utc_text(record.preview.generated_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_change_preview(self, preview_hash: str) -> StoredChangeImpactPreview:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM change_previews WHERE preview_hash = ?",
+                (preview_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("change preview not found")
+        return self._change_preview_from_row(row)
+
+    def list_change_previews(
+        self, project_id: str
+    ) -> tuple[StoredChangeImpactPreview, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM change_previews
+                WHERE project_id = ? ORDER BY generated_at, preview_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._change_preview_from_row(row) for row in rows)
+
+    def store_external_evidence_plan(
+        self, record: StoredExternalEvidencePlan, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_external_evidence_plan(connection, record),
+        )
+
+    def _insert_external_evidence_plan(
+        self, connection: sqlite3.Connection, record: StoredExternalEvidencePlan
+    ) -> None:
+        record = StoredExternalEvidencePlan.model_validate(
+            record.model_dump(mode="python")
+        )
+        baseline_row = connection.execute(
+            """
+            SELECT * FROM connector_snapshots
+            WHERE project_id = ? AND snapshot_id = ?
+            """,
+            (record.project_id, record.baseline_snapshot_id),
+        ).fetchone()
+        if baseline_row is None:
+            raise RecordNotFoundError(
+                "external evidence plan baseline snapshot not found"
+            )
+        baseline = self._connector_snapshot_from_row(baseline_row)
+        if baseline.snapshot_hash != record.baseline_snapshot_hash:
+            raise IntegrityConflictError(
+                "external evidence plan does not bind its stored baseline snapshot"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO external_evidence_plans VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.plan_hash,
+                record.project_id,
+                record.scenario_id,
+                record.scenario_hash,
+                record.baseline_snapshot_id,
+                record.baseline_snapshot_hash,
+                _canonical_model(record),
+                _utc_text(record.plan.generated_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_external_evidence_plan(self, plan_hash: str) -> StoredExternalEvidencePlan:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM external_evidence_plans WHERE plan_hash = ?",
+                (plan_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("external evidence plan not found")
+        return self._external_evidence_plan_from_row(row)
+
+    def list_external_evidence_plans(
+        self, project_id: str
+    ) -> tuple[StoredExternalEvidencePlan, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM external_evidence_plans
+                WHERE project_id = ? ORDER BY generated_at, plan_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._external_evidence_plan_from_row(row) for row in rows)
+
+    def store_external_evidence_plan_verification(
+        self,
+        record: StoredExternalEvidencePlanVerification,
+        *,
+        expected_project_version: int,
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_external_evidence_plan_verification(
+                connection, record
+            ),
+        )
+
+    def _insert_external_evidence_plan_verification(
+        self,
+        connection: sqlite3.Connection,
+        record: StoredExternalEvidencePlanVerification,
+    ) -> None:
+        record = StoredExternalEvidencePlanVerification.model_validate(
+            record.model_dump(mode="python")
+        )
+        plan_row = connection.execute(
+            "SELECT * FROM external_evidence_plans WHERE plan_hash = ?",
+            (record.plan_hash,),
+        ).fetchone()
+        assessment_row = connection.execute(
+            "SELECT * FROM change_assessments WHERE analysis_hash = ?",
+            (record.actual_change_analysis_hash,),
+        ).fetchone()
+        if plan_row is None:
+            raise RecordNotFoundError("external evidence verification plan not found")
+        if assessment_row is None:
+            raise RecordNotFoundError(
+                "external evidence verification assessment not found"
+            )
+        plan = self._external_evidence_plan_from_row(plan_row)
+        assessment = self._change_assessment_from_row(assessment_row)
+        if (
+            plan.project_id != record.project_id
+            or assessment.project_id != record.project_id
+        ):
+            raise IntegrityConflictError(
+                "external evidence verification inputs belong to another project"
+            )
+        if (
+            plan.baseline_snapshot_id != assessment.assessment.from_snapshot_id
+            or plan.baseline_snapshot_hash != assessment.assessment.from_snapshot_hash
+        ):
+            raise IntegrityConflictError(
+                "external evidence plan baseline does not match actual change analysis"
+            )
+        for binding in record.verification.imported_evidence:
+            raw_row = connection.execute(
+                """
+                SELECT * FROM release_evidence
+                WHERE project_id = ? AND evidence_id = ?
+                """,
+                (record.project_id, binding.evidence.evidence_id),
+            ).fetchone()
+            if raw_row is None:
+                raise RecordNotFoundError(
+                    "external evidence verification import not found"
+                )
+            raw = self._release_evidence_from_row(raw_row)
+            if (
+                raw.evidence_hash != binding.evidence_hash
+                or raw.evidence != binding.evidence
+                or raw.change_analysis_hash != record.actual_change_analysis_hash
+            ):
+                raise IntegrityConflictError(
+                    "external evidence verification does not bind stored evidence"
+                )
+        self._insert_immutable(
+            connection,
+            """
+            INSERT INTO external_evidence_plan_verifications
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.verification_hash,
+                record.project_id,
+                record.plan_hash,
+                record.actual_change_analysis_hash,
+                _canonical_model(record),
+                _utc_text(record.verification.verified_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_external_evidence_plan_verification(
+        self, verification_hash: str
+    ) -> StoredExternalEvidencePlanVerification:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM external_evidence_plan_verifications
+                WHERE verification_hash = ?
+                """,
+                (verification_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("external evidence plan verification not found")
+        return self._external_evidence_plan_verification_from_row(row)
+
+    def list_external_evidence_plan_verifications(
+        self, project_id: str
+    ) -> tuple[StoredExternalEvidencePlanVerification, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM external_evidence_plan_verifications
+                WHERE project_id = ? ORDER BY verified_at, verification_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(
+            self._external_evidence_plan_verification_from_row(row) for row in rows
+        )
+
+    def store_plan_verification(
+        self, record: StoredPlanVerification, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_plan_verification(connection, record),
+        )
+
+    def _insert_plan_verification(
+        self, connection: sqlite3.Connection, record: StoredPlanVerification
+    ) -> None:
+        record = StoredPlanVerification.model_validate(record.model_dump(mode="python"))
+        preview_row = connection.execute(
+            "SELECT * FROM change_previews WHERE preview_hash = ?",
+            (record.preview_hash,),
+        ).fetchone()
+        assessment_row = connection.execute(
+            "SELECT * FROM change_assessments WHERE analysis_hash = ?",
+            (record.actual_change_analysis_hash,),
+        ).fetchone()
+        if preview_row is None:
+            raise RecordNotFoundError("plan verification preview not found")
+        if assessment_row is None:
+            raise RecordNotFoundError("plan verification assessment not found")
+        preview = self._change_preview_from_row(preview_row)
+        assessment = self._change_assessment_from_row(assessment_row)
+        if (
+            preview.project_id != record.project_id
+            or preview.scenario_id != record.scenario_id
+            or assessment.project_id != record.project_id
+        ):
+            raise IntegrityConflictError(
+                "plan verification does not bind stored preview and assessment"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO plan_verifications VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.verification_hash,
+                record.project_id,
+                record.scenario_id,
+                record.preview_hash,
+                record.actual_change_analysis_hash,
+                _canonical_model(record),
+                _utc_text(record.verification.verified_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_plan_verification(self, verification_hash: str) -> StoredPlanVerification:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM plan_verifications WHERE verification_hash = ?",
+                (verification_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("plan verification not found")
+        return self._plan_verification_from_row(row)
+
+    def list_plan_verifications(
+        self, project_id: str
+    ) -> tuple[StoredPlanVerification, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM plan_verifications
+                WHERE project_id = ? ORDER BY verified_at, verification_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._plan_verification_from_row(row) for row in rows)
+
+    def store_design_proposal(
+        self, record: StoredDesignProposalSet, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_design_proposal(connection, record),
+        )
+
+    def _insert_design_proposal(
+        self, connection: sqlite3.Connection, record: StoredDesignProposalSet
+    ) -> None:
+        record = StoredDesignProposalSet.model_validate(
+            record.model_dump(mode="python")
+        )
+        preview_row = connection.execute(
+            "SELECT * FROM change_previews WHERE preview_hash = ?",
+            (record.preview_hash,),
+        ).fetchone()
+        if preview_row is None:
+            raise RecordNotFoundError("design proposal preview not found")
+        preview = self._change_preview_from_row(preview_row)
+        if (
+            preview.project_id != record.project_id
+            or preview.preview_hash != record.preview_hash
+            or preview.baseline_snapshot_id != record.proposal.baseline_snapshot_id
+            or preview.baseline_snapshot_hash != record.proposal.baseline_snapshot_hash
+        ):
+            raise IntegrityConflictError(
+                "design proposal does not bind its stored preview"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO design_proposals VALUES(?, ?, ?, ?, ?)",
+            (
+                record.proposal_hash,
+                record.project_id,
+                record.preview_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_design_proposal(self, proposal_hash: str) -> StoredDesignProposalSet:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM design_proposals WHERE proposal_hash = ?",
+                (proposal_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("design proposal not found")
+        return self._design_proposal_from_row(row)
+
+    def list_design_proposals(
+        self, project_id: str
+    ) -> tuple[StoredDesignProposalSet, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM design_proposals
+                WHERE project_id = ? ORDER BY stored_at, proposal_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._design_proposal_from_row(row) for row in rows)
+
+    def store_design_candidate(
+        self, record: StoredDesignCandidate, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_design_candidate(connection, record),
+        )
+
+    def _insert_design_candidate(
+        self, connection: sqlite3.Connection, record: StoredDesignCandidate
+    ) -> None:
+        record = StoredDesignCandidate.model_validate(record.model_dump(mode="python"))
+        proposal_row = connection.execute(
+            "SELECT * FROM design_proposals WHERE proposal_hash = ?",
+            (record.candidate.proposal_hash,),
+        ).fetchone()
+        if proposal_row is None:
+            raise RecordNotFoundError("design candidate proposal not found")
+        proposal = self._design_proposal_from_row(proposal_row)
+        if (
+            proposal.project_id != record.project_id
+            or proposal.proposal_hash != record.candidate.proposal_hash
+            or proposal.proposal.baseline_snapshot_hash
+            != record.candidate.baseline_snapshot_hash
+        ):
+            raise IntegrityConflictError(
+                "design candidate does not bind its stored proposal baseline"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO design_candidates VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.candidate_hash,
+                record.project_id,
+                record.session_id,
+                record.candidate.candidate_id,
+                record.candidate.revision,
+                record.candidate.proposal_hash,
+                _canonical_model(record),
+                _utc_text(record.candidate.confirmed_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_design_candidate(self, candidate_hash: str) -> StoredDesignCandidate:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM design_candidates WHERE candidate_hash = ?",
+                (candidate_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("design candidate not found")
+        return self._design_candidate_from_row(row)
+
+    def list_design_candidates(
+        self, project_id: str
+    ) -> tuple[StoredDesignCandidate, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM design_candidates
+                WHERE project_id = ? ORDER BY confirmed_at, candidate_id, revision
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._design_candidate_from_row(row) for row in rows)
+
+    def store_simulation_binding(
+        self, record: StoredSimulationBinding, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_simulation_binding(connection, record),
+        )
+
+    def _insert_simulation_binding(
+        self, connection: sqlite3.Connection, record: StoredSimulationBinding
+    ) -> None:
+        record = StoredSimulationBinding.model_validate(
+            record.model_dump(mode="python")
+        )
+        candidate_row = connection.execute(
+            "SELECT * FROM design_candidates WHERE candidate_hash = ?",
+            (record.candidate_hash,),
+        ).fetchone()
+        if candidate_row is None:
+            raise RecordNotFoundError("simulation design candidate not found")
+        candidate = self._design_candidate_from_row(candidate_row)
+        if (
+            candidate.project_id != record.project_id
+            or candidate.session_id != record.session_id
+        ):
+            raise IntegrityConflictError(
+                "simulation candidate belongs to another project or session"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO simulation_bindings VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.simulation_hash,
+                record.project_id,
+                record.session_id,
+                record.simulation.simulation_id,
+                record.candidate_hash,
+                _canonical_model(record),
+                _utc_text(record.simulation.created_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_simulation_binding(self, simulation_hash: str) -> StoredSimulationBinding:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM simulation_bindings WHERE simulation_hash = ?",
+                (simulation_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("simulation binding not found")
+        return self._simulation_binding_from_row(row)
+
+    def list_simulation_bindings(
+        self, project_id: str
+    ) -> tuple[StoredSimulationBinding, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM simulation_bindings
+                WHERE project_id = ? ORDER BY created_at, simulation_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._simulation_binding_from_row(row) for row in rows)
+
+    def store_evidence_claim(
+        self, record: StoredEvidenceClaim, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_evidence_claim(connection, record),
+        )
+
+    def _insert_evidence_claim(
+        self, connection: sqlite3.Connection, record: StoredEvidenceClaim
+    ) -> None:
+        record = StoredEvidenceClaim.model_validate(record.model_dump(mode="python"))
+        self._insert_immutable(
+            connection,
+            "INSERT INTO conversational_evidence_claims VALUES(?, ?, ?, ?, ?, ?)",
+            (
+                record.claim_hash,
+                record.project_id,
+                record.session_id,
+                record.claim.claim_id,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_evidence_claim(self, claim_hash: str) -> StoredEvidenceClaim:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM conversational_evidence_claims WHERE claim_hash = ?",
+                (claim_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("conversational evidence claim not found")
+        return self._evidence_claim_from_row(row)
+
+    def list_evidence_claims(self, project_id: str) -> tuple[StoredEvidenceClaim, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM conversational_evidence_claims
+                WHERE project_id = ? ORDER BY stored_at, claim_id
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._evidence_claim_from_row(row) for row in rows)
+
+    def append_design_state_transition(
+        self,
+        record: StoredDesignStateTransition,
+        *,
+        expected_project_version: int,
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._append_design_state_transition(connection, record),
+        )
+
+    def _append_design_state_transition(
+        self, connection: sqlite3.Connection, record: StoredDesignStateTransition
+    ) -> None:
+        record = StoredDesignStateTransition.model_validate(
+            record.model_dump(mode="python")
+        )
+        latest_row = connection.execute(
+            """
+            SELECT * FROM design_state_transitions
+            WHERE project_id = ? AND session_id = ?
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            (record.project_id, record.session_id),
+        ).fetchone()
+        if latest_row is None:
+            if record.sequence != 1 or record.transition.from_state.value != "idea":
+                raise IntegrityConflictError(
+                    "first design transition must begin at IDEA with sequence 1"
+                )
+        else:
+            latest = self._design_state_transition_from_row(latest_row)
+            if (
+                record.sequence != latest.sequence + 1
+                or record.transition.from_state is not latest.transition.to_state
+                or record.transition.occurred_at < latest.transition.occurred_at
+            ):
+                raise IntegrityConflictError(
+                    "design transition history must be contiguous and monotonic"
+                )
+        if record.transition.candidate_hash is not None:
+            row = connection.execute(
+                """
+                SELECT * FROM design_candidates
+                WHERE project_id = ? AND candidate_hash = ?
+                """,
+                (record.project_id, record.transition.candidate_hash),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFoundError("design transition candidate not found")
+            candidate = self._design_candidate_from_row(row)
+            if candidate.session_id != record.session_id:
+                raise IntegrityConflictError(
+                    "design transition candidate belongs to another session"
+                )
+        if record.transition.simulation_hash is not None:
+            row = connection.execute(
+                """
+                SELECT * FROM simulation_bindings
+                WHERE project_id = ? AND simulation_hash = ?
+                """,
+                (record.project_id, record.transition.simulation_hash),
+            ).fetchone()
+            if row is None:
+                raise RecordNotFoundError("design transition simulation not found")
+            simulation = self._simulation_binding_from_row(row)
+            if simulation.session_id != record.session_id:
+                raise IntegrityConflictError(
+                    "design transition simulation belongs to another session"
+                )
+            if (
+                record.transition.candidate_hash is not None
+                and simulation.candidate_hash != record.transition.candidate_hash
+            ):
+                raise IntegrityConflictError(
+                    "design transition simulation must bind the selected candidate"
+                )
+        if record.transition.to_state.value == "verified":
+            for evidence_ref in record.transition.evidence_refs:
+                ref_kind, separator, evidence_id = evidence_ref.partition(":")
+                if ref_kind != "release-evidence" or not separator or not evidence_id:
+                    raise IntegrityConflictError(
+                        "verified transition evidence reference is unsupported"
+                    )
+                evidence_row = connection.execute(
+                    """
+                    SELECT evidence_id FROM release_evidence
+                    WHERE project_id = ? AND evidence_id = ?
+                    """,
+                    (record.project_id, evidence_id),
+                ).fetchone()
+                if evidence_row is None:
+                    raise RecordNotFoundError(
+                        "verified transition release evidence not found"
+                    )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO design_state_transitions VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.session_id,
+                record.sequence,
+                record.transition.from_state.value,
+                record.transition.to_state.value,
+                record.transition.candidate_hash,
+                record.transition.simulation_hash,
+                _canonical_model(record),
+                _utc_text(record.transition.occurred_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def list_design_state_transitions(
+        self, project_id: str, session_id: str | None = None
+    ) -> tuple[StoredDesignStateTransition, ...]:
+        query = (
+            "SELECT * FROM design_state_transitions WHERE project_id = ? "
+            "ORDER BY session_id, sequence"
+        )
+        parameters: tuple[object, ...] = (project_id,)
+        if session_id is not None:
+            query = (
+                "SELECT * FROM design_state_transitions "
+                "WHERE project_id = ? AND session_id = ? ORDER BY sequence"
+            )
+            parameters = (project_id, session_id)
+        with self._reading() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return tuple(self._design_state_transition_from_row(row) for row in rows)
+
+    def store_release_diagnosis(
+        self, record: StoredReleaseDiagnosis, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_release_diagnosis(connection, record),
+        )
+
+    def _insert_release_diagnosis(
+        self, connection: sqlite3.Connection, record: StoredReleaseDiagnosis
+    ) -> None:
+        record = StoredReleaseDiagnosis.model_validate(record.model_dump(mode="python"))
+        decision_row = connection.execute(
+            "SELECT * FROM release_decisions WHERE decision_hash = ?",
+            (record.decision_hash,),
+        ).fetchone()
+        if decision_row is None:
+            raise RecordNotFoundError("release diagnosis decision not found")
+        decision = self._release_decision_from_row(decision_row)
+        if (
+            decision.project_id != record.project_id
+            or decision.decision_hash != record.decision_hash
+            or canonical_sha256(decision.decision)
+            != canonical_sha256(record.diagnosis.decision)
+        ):
+            raise IntegrityConflictError(
+                "release diagnosis does not bind its stored decision"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO release_diagnoses VALUES(?, ?, ?, ?, ?)",
+            (
+                record.diagnosis_hash,
+                record.project_id,
+                record.decision_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_release_diagnosis(self, diagnosis_hash: str) -> StoredReleaseDiagnosis:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM release_diagnoses WHERE diagnosis_hash = ?",
+                (diagnosis_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("release diagnosis not found")
+        return self._release_diagnosis_from_row(row)
+
+    def list_release_diagnoses(
+        self, project_id: str
+    ) -> tuple[StoredReleaseDiagnosis, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM release_diagnoses
+                WHERE project_id = ? ORDER BY stored_at, diagnosis_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._release_diagnosis_from_row(row) for row in rows)
+
+    def store_resolution_plan(
+        self, record: StoredResolutionPlan, *, expected_project_version: int
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_resolution_plan(connection, record),
+        )
+
+    def _insert_resolution_plan(
+        self, connection: sqlite3.Connection, record: StoredResolutionPlan
+    ) -> None:
+        record = StoredResolutionPlan.model_validate(record.model_dump(mode="python"))
+        diagnosis_row = connection.execute(
+            "SELECT * FROM release_diagnoses WHERE diagnosis_hash = ?",
+            (record.diagnosis_hash,),
+        ).fetchone()
+        if diagnosis_row is None:
+            raise RecordNotFoundError("resolution plan diagnosis not found")
+        diagnosis = self._release_diagnosis_from_row(diagnosis_row)
+        matching = tuple(
+            proposal
+            for proposal_set in diagnosis.fix_proposal_sets
+            for proposal in proposal_set.proposals
+            if proposal.fix_hash == record.fix_proposal_hash
+        )
+        if (
+            diagnosis.project_id != record.project_id
+            or len(matching) != 1
+            or canonical_sha256(matching[0])
+            != canonical_sha256(record.selection.selected_fix)
+        ):
+            raise IntegrityConflictError(
+                "resolution plan does not bind an exact stored fix proposal"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO resolution_plans VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.plan_hash,
+                record.project_id,
+                record.diagnosis_hash,
+                record.fix_proposal_hash,
+                _canonical_model(record),
+                _utc_text(record.selection.selected_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_resolution_plan(self, plan_hash: str) -> StoredResolutionPlan:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM resolution_plans WHERE plan_hash = ?",
+                (plan_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("resolution plan not found")
+        return self._resolution_plan_from_row(row)
+
+    def list_resolution_plans(
+        self, project_id: str
+    ) -> tuple[StoredResolutionPlan, ...]:
+        with self._reading() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM resolution_plans
+                WHERE project_id = ? ORDER BY selected_at, plan_hash
+                """,
+                (project_id,),
+            ).fetchall()
+        return tuple(self._resolution_plan_from_row(row) for row in rows)
+
     def store_release_evidence(
         self, record: StoredRawReleaseEvidence, *, expected_project_version: int
     ) -> int:
@@ -2542,6 +4307,111 @@ class SQLiteEvidenceStore:
             self._add_table_entries(
                 entries,
                 connection,
+                self._change_preview_from_row,
+                "SELECT * FROM change_previews "
+                "WHERE project_id = ? ORDER BY generated_at, preview_hash",
+                project_id,
+                lambda row: f"change-previews/{row['preview_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._external_evidence_plan_from_row,
+                "SELECT * FROM external_evidence_plans "
+                "WHERE project_id = ? ORDER BY generated_at, plan_hash",
+                project_id,
+                lambda row: f"external-evidence-plans/{row['plan_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._external_evidence_plan_verification_from_row,
+                "SELECT * FROM external_evidence_plan_verifications "
+                "WHERE project_id = ? ORDER BY verified_at, verification_hash",
+                project_id,
+                lambda row: (
+                    "external-evidence-plan-verifications/"
+                    f"{row['verification_hash']}.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._plan_verification_from_row,
+                "SELECT * FROM plan_verifications "
+                "WHERE project_id = ? ORDER BY verified_at, verification_hash",
+                project_id,
+                lambda row: f"plan-verifications/{row['verification_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._design_proposal_from_row,
+                "SELECT * FROM design_proposals "
+                "WHERE project_id = ? ORDER BY stored_at, proposal_hash",
+                project_id,
+                lambda row: f"design-proposals/{row['proposal_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._design_candidate_from_row,
+                "SELECT * FROM design_candidates "
+                "WHERE project_id = ? ORDER BY confirmed_at, candidate_hash",
+                project_id,
+                lambda row: f"design-candidates/{row['candidate_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._simulation_binding_from_row,
+                "SELECT * FROM simulation_bindings "
+                "WHERE project_id = ? ORDER BY created_at, simulation_hash",
+                project_id,
+                lambda row: f"simulation-bindings/{row['simulation_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._evidence_claim_from_row,
+                "SELECT * FROM conversational_evidence_claims "
+                "WHERE project_id = ? ORDER BY stored_at, claim_hash",
+                project_id,
+                lambda row: f"evidence-claims/{row['claim_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._design_state_transition_from_row,
+                "SELECT * FROM design_state_transitions "
+                "WHERE project_id = ? ORDER BY session_id, sequence",
+                project_id,
+                lambda row: (
+                    f"design-state-transitions/{row['session_id']}"
+                    f"-{row['sequence']}.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._release_diagnosis_from_row,
+                "SELECT * FROM release_diagnoses "
+                "WHERE project_id = ? ORDER BY stored_at, diagnosis_hash",
+                project_id,
+                lambda row: f"release-diagnoses/{row['diagnosis_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._resolution_plan_from_row,
+                "SELECT * FROM resolution_plans "
+                "WHERE project_id = ? ORDER BY selected_at, plan_hash",
+                project_id,
+                lambda row: f"resolution-plans/{row['plan_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
                 self._release_evidence_from_row,
                 "SELECT * FROM release_evidence "
                 "WHERE project_id = ? ORDER BY occurred_at, evidence_id",
@@ -2556,6 +4426,42 @@ class SQLiteEvidenceStore:
                 "WHERE project_id = ? ORDER BY sequence",
                 project_id,
                 lambda row: f"release-decisions/{row['sequence']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._audit_event_from_row,
+                "SELECT * FROM audit_events "
+                "WHERE project_id = ? ORDER BY occurred_at, event_id",
+                project_id,
+                lambda row: f"audit-events/{row['event_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._knowledge_source_from_row,
+                "SELECT * FROM knowledge_sources "
+                "WHERE project_id = ? ORDER BY stored_at, source_id",
+                project_id,
+                lambda row: f"knowledge-sources/{row['source_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._runtime_result_from_row,
+                "SELECT * FROM conversation_runtime_results "
+                "WHERE project_id = ? ORDER BY stored_at, request_id",
+                project_id,
+                lambda row: f"conversation-runtime/{row['request_id']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._cad_geometry_from_row,
+                "SELECT * FROM cad_geometry_assets "
+                "WHERE project_id = ? ORDER BY stored_at, asset_id",
+                project_id,
+                lambda row: f"cad-geometries/{row['asset_id']}.json",
             )
         entries.sort(key=lambda entry: str(entry["path"]))
         manifest = [
@@ -2607,7 +4513,13 @@ class SQLiteEvidenceStore:
         path_pattern = (
             r"project\.json|release-policy\.json|"
             r"(?:specs|spec-events|revisions|approvals|preparations|runs|evidence|cost|"
-            r"connector-snapshots|change-assessments|release-evidence|release-decisions)/"
+            r"connector-snapshots|change-assessments|change-previews|"
+            r"external-evidence-plans|external-evidence-plan-verifications|"
+            r"plan-verifications|design-proposals|design-candidates|"
+            r"simulation-bindings|evidence-claims|design-state-transitions|"
+            r"release-diagnoses|"
+            r"resolution-plans|release-evidence|release-decisions|audit-events|"
+            r"knowledge-sources|conversation-runtime|cad-geometries)/"
             r"[A-Za-z0-9][A-Za-z0-9._:-]{0,160}\.json"
         )
         if re.fullmatch(path_pattern, path) is None:
@@ -2632,6 +4544,245 @@ class SQLiteEvidenceStore:
             connection.execute(query, parameters)
         except sqlite3.IntegrityError as exc:
             raise IntegrityConflictError("immutable record already exists") from exc
+
+    @staticmethod
+    def _put_organization(connection: sqlite3.Connection, record: Organization) -> None:
+        _safe_id(record.org_id, "org_id")
+        connection.execute(
+            """
+            INSERT INTO organizations VALUES(?, ?, ?)
+            ON CONFLICT(org_id) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                created_at = excluded.created_at
+            """,
+            (
+                record.org_id,
+                _canonical_model(record),
+                _utc_text(record.created_at),
+            ),
+        )
+
+    @staticmethod
+    def _put_actor(connection: sqlite3.Connection, record: Actor) -> None:
+        connection.execute(
+            """
+            INSERT INTO actors VALUES(?, ?, ?)
+            ON CONFLICT(actor_id) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                active = excluded.active
+            """,
+            (record.actor_id, _canonical_model(record), int(record.active)),
+        )
+
+    @staticmethod
+    def _put_membership(connection: sqlite3.Connection, record: Membership) -> None:
+        connection.execute(
+            """
+            INSERT INTO memberships VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(org_id, actor_id) DO UPDATE SET
+                role = excluded.role,
+                payload_json = excluded.payload_json,
+                granted_at = excluded.granted_at,
+                active = excluded.active
+            """,
+            (
+                record.org_id,
+                record.actor_id,
+                record.role.value,
+                _canonical_model(record),
+                _utc_text(record.granted_at),
+                int(record.active),
+            ),
+        )
+
+    @staticmethod
+    def _put_project_access(
+        connection: sqlite3.Connection, record: ProjectAccess
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO project_access VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(org_id, project_id, actor_id) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                active = excluded.active
+            """,
+            (
+                record.org_id,
+                record.project_id,
+                record.actor_id,
+                _canonical_model(record),
+                int(record.active),
+            ),
+        )
+
+    @staticmethod
+    def _append_audit_event(connection: sqlite3.Connection, record: AuditEvent) -> None:
+        existing = connection.execute(
+            "SELECT * FROM audit_events WHERE event_id = ?", (record.event_id,)
+        ).fetchone()
+        if existing is not None:
+            stored = SQLiteEvidenceStore._audit_event_from_row(existing)
+            if stored == record:
+                return
+            raise IntegrityConflictError("audit event id was reused")
+        SQLiteEvidenceStore._insert_immutable(
+            connection,
+            "INSERT INTO audit_events VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.event_id,
+                record.event_hash,
+                record.org_id,
+                record.actor_id,
+                record.project_id,
+                record.operation.value,
+                record.request_hash,
+                record.result_hash,
+                int(record.allowed),
+                record.reason,
+                _canonical_model(record),
+                _utc_text(record.occurred_at),
+            ),
+        )
+
+    @staticmethod
+    def _insert_knowledge_source(
+        connection: sqlite3.Connection, record: StoredKnowledgeSource
+    ) -> None:
+        SQLiteEvidenceStore._insert_immutable(
+            connection,
+            "INSERT INTO knowledge_sources VALUES(?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.source_id,
+                record.ingestion.source.source_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    @staticmethod
+    def _insert_runtime_result(
+        connection: sqlite3.Connection, record: StoredRuntimeResult
+    ) -> None:
+        SQLiteEvidenceStore._insert_immutable(
+            connection,
+            "INSERT INTO conversation_runtime_results VALUES(?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.request_id,
+                record.runtime.runtime_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    @staticmethod
+    def _insert_cad_geometry(
+        connection: sqlite3.Connection, record: StoredCADGeometryAsset
+    ) -> None:
+        SQLiteEvidenceStore._insert_immutable(
+            connection,
+            "INSERT INTO cad_geometry_assets VALUES(?, ?, ?, ?, ?)",
+            (
+                record.project_id,
+                record.asset_id,
+                record.asset.asset_hash,
+                _canonical_model(record),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def _organization_from_row(self, row: sqlite3.Row) -> Organization:
+        value = self._decode(Organization, row["payload_json"])
+        self._require_binding(
+            row["org_id"] == value.org_id
+            and row["created_at"] == _utc_text(value.created_at),
+            "organization row does not match its payload",
+        )
+        return value
+
+    def _actor_from_row(self, row: sqlite3.Row) -> Actor:
+        value = self._decode(Actor, row["payload_json"])
+        self._require_binding(
+            row["actor_id"] == value.actor_id and bool(row["active"]) == value.active,
+            "actor row does not match its payload",
+        )
+        return value
+
+    def _membership_from_row(self, row: sqlite3.Row) -> Membership:
+        value = self._decode(Membership, row["payload_json"])
+        self._require_binding(
+            row["org_id"] == value.org_id
+            and row["actor_id"] == value.actor_id
+            and row["role"] == value.role.value
+            and row["granted_at"] == _utc_text(value.granted_at)
+            and bool(row["active"]) == value.active,
+            "membership row does not match its payload",
+        )
+        return value
+
+    def _project_access_from_row(self, row: sqlite3.Row) -> ProjectAccess:
+        value = self._decode(ProjectAccess, row["payload_json"])
+        self._require_binding(
+            row["org_id"] == value.org_id
+            and row["project_id"] == value.project_id
+            and row["actor_id"] == value.actor_id
+            and bool(row["active"]) == value.active,
+            "project access row does not match its payload",
+        )
+        return value
+
+    @staticmethod
+    def _audit_event_from_row(row: sqlite3.Row) -> AuditEvent:
+        value = SQLiteEvidenceStore._decode(AuditEvent, row["payload_json"])
+        SQLiteEvidenceStore._require_binding(
+            row["event_id"] == value.event_id
+            and row["event_hash"] == value.event_hash
+            and row["org_id"] == value.org_id
+            and row["actor_id"] == value.actor_id
+            and row["project_id"] == value.project_id
+            and row["operation"] == value.operation.value
+            and row["request_hash"] == value.request_hash
+            and row["result_hash"] == value.result_hash
+            and bool(row["allowed"]) == value.allowed
+            and row["reason"] == value.reason
+            and row["occurred_at"] == _utc_text(value.occurred_at),
+            "audit event row does not match its payload",
+        )
+        return value
+
+    def _knowledge_source_from_row(self, row: sqlite3.Row) -> StoredKnowledgeSource:
+        value = self._decode(StoredKnowledgeSource, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["source_id"] == value.source_id
+            and row["source_hash"] == value.ingestion.source.source_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "knowledge source row does not match its payload",
+        )
+        return value
+
+    def _runtime_result_from_row(self, row: sqlite3.Row) -> StoredRuntimeResult:
+        value = self._decode(StoredRuntimeResult, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["request_id"] == value.request_id
+            and row["runtime_hash"] == value.runtime.runtime_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "conversation runtime row does not match its payload",
+        )
+        return value
+
+    def _cad_geometry_from_row(self, row: sqlite3.Row) -> StoredCADGeometryAsset:
+        value = self._decode(StoredCADGeometryAsset, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["asset_id"] == value.asset_id
+            and row["asset_hash"] == value.asset.asset_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "CAD geometry row does not match its payload",
+        )
+        return value
 
     def _spec_from_row(self, row: sqlite3.Row) -> StoredSpec:
         value = self._decode(StoredSpec, row["payload_json"])
@@ -2730,6 +4881,163 @@ class SQLiteEvidenceStore:
             and row["to_snapshot_id"] == value.to_snapshot_id
             and row["stored_at"] == _utc_text(value.stored_at),
             "change assessment row does not match its payload",
+        )
+        return value
+
+    def _change_preview_from_row(self, row: sqlite3.Row) -> StoredChangeImpactPreview:
+        value = self._decode(StoredChangeImpactPreview, row["payload_json"])
+        self._require_binding(
+            row["preview_hash"] == value.preview_hash
+            and row["project_id"] == value.project_id
+            and row["scenario_id"] == value.scenario_id
+            and row["scenario_hash"] == value.scenario_hash
+            and row["baseline_snapshot_id"] == value.baseline_snapshot_id
+            and row["baseline_snapshot_hash"] == value.baseline_snapshot_hash
+            and row["generated_at"] == _utc_text(value.preview.generated_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "change preview row does not match its payload",
+        )
+        return value
+
+    def _plan_verification_from_row(self, row: sqlite3.Row) -> StoredPlanVerification:
+        value = self._decode(StoredPlanVerification, row["payload_json"])
+        self._require_binding(
+            row["verification_hash"] == value.verification_hash
+            and row["project_id"] == value.project_id
+            and row["scenario_id"] == value.scenario_id
+            and row["preview_hash"] == value.preview_hash
+            and row["actual_change_analysis_hash"] == value.actual_change_analysis_hash
+            and row["verified_at"] == _utc_text(value.verification.verified_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "plan verification row does not match its payload",
+        )
+        return value
+
+    def _external_evidence_plan_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredExternalEvidencePlan:
+        value = self._decode(StoredExternalEvidencePlan, row["payload_json"])
+        self._require_binding(
+            row["plan_hash"] == value.plan_hash
+            and row["project_id"] == value.project_id
+            and row["scenario_id"] == value.scenario_id
+            and row["scenario_hash"] == value.scenario_hash
+            and row["baseline_snapshot_id"] == value.baseline_snapshot_id
+            and row["baseline_snapshot_hash"] == value.baseline_snapshot_hash
+            and row["generated_at"] == _utc_text(value.plan.generated_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "external evidence plan row does not match its payload",
+        )
+        return value
+
+    def _external_evidence_plan_verification_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredExternalEvidencePlanVerification:
+        value = self._decode(
+            StoredExternalEvidencePlanVerification, row["payload_json"]
+        )
+        self._require_binding(
+            row["verification_hash"] == value.verification_hash
+            and row["project_id"] == value.project_id
+            and row["plan_hash"] == value.plan_hash
+            and row["actual_change_analysis_hash"] == value.actual_change_analysis_hash
+            and row["verified_at"] == _utc_text(value.verification.verified_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "external evidence plan verification row does not match its payload",
+        )
+        return value
+
+    def _design_proposal_from_row(self, row: sqlite3.Row) -> StoredDesignProposalSet:
+        value = self._decode(StoredDesignProposalSet, row["payload_json"])
+        self._require_binding(
+            row["proposal_hash"] == value.proposal_hash
+            and row["project_id"] == value.project_id
+            and row["preview_hash"] == value.preview_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "design proposal row does not match its payload",
+        )
+        return value
+
+    def _design_candidate_from_row(self, row: sqlite3.Row) -> StoredDesignCandidate:
+        value = self._decode(StoredDesignCandidate, row["payload_json"])
+        self._require_binding(
+            row["candidate_hash"] == value.candidate_hash
+            and row["project_id"] == value.project_id
+            and row["session_id"] == value.session_id
+            and row["candidate_id"] == value.candidate.candidate_id
+            and int(row["revision"]) == value.candidate.revision
+            and row["proposal_hash"] == value.candidate.proposal_hash
+            and row["confirmed_at"] == _utc_text(value.candidate.confirmed_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "design candidate row does not match its payload",
+        )
+        return value
+
+    def _simulation_binding_from_row(self, row: sqlite3.Row) -> StoredSimulationBinding:
+        value = self._decode(StoredSimulationBinding, row["payload_json"])
+        self._require_binding(
+            row["simulation_hash"] == value.simulation_hash
+            and row["project_id"] == value.project_id
+            and row["session_id"] == value.session_id
+            and row["simulation_id"] == value.simulation.simulation_id
+            and row["candidate_hash"] == value.candidate_hash
+            and row["created_at"] == _utc_text(value.simulation.created_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "simulation binding row does not match its payload",
+        )
+        return value
+
+    def _evidence_claim_from_row(self, row: sqlite3.Row) -> StoredEvidenceClaim:
+        value = self._decode(StoredEvidenceClaim, row["payload_json"])
+        self._require_binding(
+            row["claim_hash"] == value.claim_hash
+            and row["project_id"] == value.project_id
+            and row["session_id"] == value.session_id
+            and row["claim_id"] == value.claim.claim_id
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "evidence claim row does not match its payload",
+        )
+        return value
+
+    def _design_state_transition_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredDesignStateTransition:
+        value = self._decode(StoredDesignStateTransition, row["payload_json"])
+        self._require_binding(
+            row["project_id"] == value.project_id
+            and row["session_id"] == value.session_id
+            and int(row["sequence"]) == value.sequence
+            and row["from_state"] == value.transition.from_state.value
+            and row["to_state"] == value.transition.to_state.value
+            and row["candidate_hash"] == value.transition.candidate_hash
+            and row["simulation_hash"] == value.transition.simulation_hash
+            and row["occurred_at"] == _utc_text(value.transition.occurred_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "design state transition row does not match its payload",
+        )
+        return value
+
+    def _release_diagnosis_from_row(self, row: sqlite3.Row) -> StoredReleaseDiagnosis:
+        value = self._decode(StoredReleaseDiagnosis, row["payload_json"])
+        self._require_binding(
+            row["diagnosis_hash"] == value.diagnosis_hash
+            and row["project_id"] == value.project_id
+            and row["decision_hash"] == value.decision_hash
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "release diagnosis row does not match its payload",
+        )
+        return value
+
+    def _resolution_plan_from_row(self, row: sqlite3.Row) -> StoredResolutionPlan:
+        value = self._decode(StoredResolutionPlan, row["payload_json"])
+        self._require_binding(
+            row["plan_hash"] == value.plan_hash
+            and row["project_id"] == value.project_id
+            and row["diagnosis_hash"] == value.diagnosis_hash
+            and row["fix_proposal_hash"] == value.fix_proposal_hash
+            and row["selected_at"] == _utc_text(value.selection.selected_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "resolution plan row does not match its payload",
         )
         return value
 
@@ -2864,4 +5172,9 @@ class SQLiteEvidenceStore:
         return cls._validate(model, value)
 
 
-__all__ = ["AtomicProjectWrite", "SQLiteEvidenceStore"]
+__all__ = [
+    "AtomicProjectWrite",
+    "LOCAL_BOOTSTRAP_ACTOR_ID",
+    "LOCAL_BOOTSTRAP_ORG_ID",
+    "SQLiteEvidenceStore",
+]

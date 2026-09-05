@@ -3,217 +3,1657 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
-    <meta name="description" content="FORGE engineering release readiness dashboard">
-    <title>FORGE · Release Evidence Console</title>
-    <link rel="stylesheet" href="/app/styles.css">
-    <script type="module" src="/app/app.js"></script>
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="FORGE conversational engineering collaboration workspace">
+    <title>
+      FORGE · Conversational Engineering
+    </title>
+    <link rel="stylesheet" href="./styles.css">
+    <script defer src="./app.js">
+    </script>
   </head>
   <body>
-    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
-    <header class="topbar">
-      <a class="brand" href="/app/" aria-label="FORGE release evidence console 홈">
-        <span class="brand-mark" aria-hidden="true">F</span>
+    <a class="skip-link" href="#main">
+      본문으로 건너뛰기
+    </a>
+    <header class="topbar" hidden>
+      <a class="brand" href="./">
+        <span class="brand-mark">
+          F
+        </span>
         <span>
-          <strong>FORGE</strong>
-          <small>Release evidence console</small>
+          <strong>
+            FORGE
+          </strong>
+          <small>
+            Conversational engineering collaboration
+          </small>
         </span>
       </a>
-      <div class="boundary-badge">
-        <span class="boundary-dot" aria-hidden="true"></span>
-        READ-ONLY · LOCAL
-      </div>
     </header>
-
     <main id="main" class="shell">
-      <section class="intro" aria-labelledby="page-title">
+      <section class="operator-head legacy-intro" hidden>
         <div>
-          <p class="eyebrow">ENGINEERING CHANGE CONTROL</p>
-          <h1 id="page-title">출시 판정보다<br>그 근거를 먼저 봅니다.</h1>
+          <p class="eyebrow">
+            ENGINEERING CHANGE MANAGEMENT AI
+          </p>
+          <h1 id="page-title">
+            로봇이나 설계를 연결하고, 변경 영향을 먼저 시뮬레이션합니다.
+          </h1>
           <p class="lede">
-            hardware revision 변경부터 firmware, BOM, protocol, 시험 결과까지
-            한 decision에 결합된 증거를 읽기 전용으로 검토합니다.
+            FORGE는 연결된 장치, CAD, 설계도, PLM snapshot을 읽기 전용 기준으로 묶습니다. 변경 영향은 사전 검토로만 쓰고, release decision은 실제 snapshot과 증거만 사용합니다.
           </p>
         </div>
-        <div class="scope-note">
-          <strong>검증 계층</strong>
-          <p>CAD · PLM · Git · CI의 원본을 수정하거나 대체하지 않습니다.</p>
-        </div>
       </section>
-
-      <section class="query-panel" aria-labelledby="query-title">
-        <div class="section-heading compact">
-          <div>
-            <p class="section-index">00 · DECISION LOOKUP</p>
-            <h2 id="query-title">불변 release decision 조회</h2>
+      <section id="start-panel" class="start-panel legacy-intro" aria-labelledby="start-title" hidden>
+        <div>
+          <p class="eyebrow">
+            START WITH FORGE
+          </p>
+          <h2 id="start-title">
+            What do you want to change?
+          </h2>
+          <form id="start-change-form" class="start-change-form" novalidate>
+            <label class="sr-only" for="start-change-input">
+              Change intent
+            </label>
+            <textarea id="start-change-input" rows="3" maxlength="800" spellcheck="false"
+              placeholder="예: Payload를 10kg에서 20kg으로 늘리고 싶어."></textarea>
+            <button id="start-change-button" type="submit">
+              <span>
+                Start with FORGE
+              </span>
+              <span aria-hidden="true">
+                →
+              </span>
+            </button>
+          </form>
+          <div id="start-status" class="load-status" role="status" aria-live="polite">
+            <strong>
+              PLAN draft 대기
+            </strong>
+            <span>
+              자연어 목표는 cited local RAG와 PLAN draft에 연결됩니다. hosted AI나 외부 tool 실행은 아닙니다.
+            </span>
           </div>
-          <p>project ID와 canonical decision hash를 입력하세요.</p>
         </div>
-        <form id="decision-form" novalidate>
-          <label>
-            <span>Project ID</span>
-            <input id="project-id" name="project" required maxlength="128"
-              pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
-              autocomplete="off" spellcheck="false" placeholder="robot-controller">
-          </label>
-          <label class="hash-field">
-            <span>Decision hash</span>
-            <input id="decision-hash" name="decision" required maxlength="71"
-              pattern="sha256:[0-9a-f]{64}" autocomplete="off" spellcheck="false"
-              placeholder="sha256:…">
-          </label>
-          <button id="load-button" type="submit">
-            <span>근거 불러오기</span>
-            <span aria-hidden="true">→</span>
-          </button>
-        </form>
-        <p id="form-help" class="form-help">
-          조회 값은 URL fragment에만 보존되며 서버 요청 로그나 외부 서비스로 전송하지 않습니다.
-        </p>
+        <section id="connected-data-summary" class="connected-data-summary" aria-labelledby="connected-data-title">
+          <h3 id="connected-data-title">
+            Connected Project Data
+          </h3>
+          <ul>
+            <li>
+              <span class="data-state connected" aria-hidden="true">
+                ✓
+              </span>
+              Git repository
+            </li>
+            <li>
+              <span class="data-state connected" aria-hidden="true">
+                ✓
+              </span>
+              BOM
+            </li>
+            <li>
+              <span class="data-state connected" aria-hidden="true">
+                ✓
+              </span>
+              Requirements
+            </li>
+            <li>
+              <span class="data-state connected" aria-hidden="true">
+                ✓
+              </span>
+              Datasheets
+            </li>
+            <li>
+              <span class="data-state pending" aria-hidden="true">
+                ○
+              </span>
+              CAD
+            </li>
+            <li>
+              <span class="data-state pending" aria-hidden="true">
+                ○
+              </span>
+              Test results
+            </li>
+          </ul>
+        </section>
       </section>
-
-      <div id="load-status" class="load-status" role="status" aria-live="polite">
-        <strong>조회 대기</strong>
-        <span>저장된 decision을 선택하면 변경·재시험·증거를 구성합니다.</span>
+      <nav class="workflow-rail legacy-intro" aria-label="FORGE workflow" hidden>
+        <a href="#connect-panel">
+          00 CONNECT/IMPORT
+        </a>
+        <a href="#plan-panel">
+          01 PLAN
+        </a>
+        <a href="#verify-panel">
+          02 VERIFY
+        </a>
+        <a href="#query-title">
+          03 RELEASE
+        </a>
+      </nav>
+      <div class="forge-workspace">
+        <aside id="chat-sidebar" class="chat-sidebar" aria-labelledby="chat-sidebar-title">
+          <a class="sidebar-brand" href="./" aria-label="FORGE home">
+            <span class="brand-mark">F</span>
+            <span id="chat-sidebar-title">FORGE</span>
+          </a>
+          <nav class="chat-nav" aria-label="Chat navigation">
+            <button type="button" data-guided-action="reset-demo">＋ New chat</button>
+            <a href="#guided-workflow">Projects</a>
+            <a href="#guided-workflow">Recent sessions</a>
+            <a href="#advanced-console">History</a>
+          </nav>
+          <section class="predeploy-readiness" aria-labelledby="predeploy-title">
+            <h2 id="predeploy-title">Pre-deploy essentials</h2>
+            <ul>
+              <li><span class="ready-dot complete"></span> Static chat UX</li>
+              <li><span class="ready-dot complete"></span> Local evidence ledger</li>
+              <li><span class="ready-dot complete"></span> Enforced RBAC + audit</li>
+              <li><span class="ready-dot complete"></span> Local cited RAG</li>
+              <li><span class="ready-dot complete"></span> STL parser + 3D context</li>
+              <li><span class="ready-dot complete"></span> Health + backup/restore</li>
+              <li><span class="ready-dot blocked"></span> Live CAD/CAE/device connectors</li>
+            </ul>
+          </section>
+          <footer class="sidebar-identity">
+            <strong>Local operator</strong>
+            <span>RBAC-audited local session</span>
+          </footer>
+        </aside>
+        <aside id="project-explorer" class="project-explorer" aria-labelledby="project-explorer-title" hidden>
+          <p class="section-index">
+            PROJECT
+          </p>
+          <h2 id="project-explorer-title">
+            Project Explorer
+          </h2>
+          <dl class="workspace-context">
+            <div>
+              <dt>
+                Name
+              </dt>
+              <dd id="workspace-project-name">
+                Robot Arm Project
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Project ID
+              </dt>
+              <dd id="workspace-project-id">
+                robot-arm-project
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Change ID
+              </dt>
+              <dd id="workspace-change-id">
+                EC-014
+              </dd>
+            </div>
+          </dl>
+          <ol id="guided-stage-list" class="guided-stage-list" aria-label="Guided change workflow">
+            <li class="current" data-guided-stage="project">
+              <span>●</span>
+              <strong>CONTEXT</strong>
+              <small>Attach or connect</small>
+            </li>
+            <li data-guided-stage="plan">
+              <span>○</span>
+              <strong>PLAN · SIMULATE</strong>
+              <small>Discuss and refine</small>
+            </li>
+            <li data-guided-stage="execute">
+              <span>○</span>
+              <strong>DESIGN FREEZE</strong>
+              <small>Approve and hand off</small>
+            </li>
+            <li data-guided-stage="verify">
+              <span>○</span>
+              <strong>VERIFY</strong>
+              <small>Compare evidence</small>
+            </li>
+            <li data-guided-stage="release">
+              <span>○</span>
+              <strong>RELEASE</strong>
+              <small>Decide readiness</small>
+            </li>
+          </ol>
+          <section class="guided-history" aria-labelledby="guided-history-title">
+            <h3 id="guided-history-title">Change history</h3>
+            <ol id="guided-history-list">
+              <li><span>Idea</span><strong>SESSION-014</strong></li>
+            </ol>
+          </section>
+          <nav class="project-links" aria-label="Project data">
+            <a href="#connect-panel">
+              Overview
+            </a>
+            <a href="#plan-panel">
+              Requirements
+            </a>
+            <a href="#provenance">
+              BOM
+            </a>
+            <a href="#plan-panel">
+              CAD
+            </a>
+            <a href="#findings">
+              Electronics
+            </a>
+            <a href="#provenance">
+              Firmware
+            </a>
+            <a href="#retests">
+              Tests
+            </a>
+            <a href="#evidence">
+              Evidence
+            </a>
+            <a href="#changes">
+              Changes
+            </a>
+          </nav>
+          <dl class="workspace-stats" aria-label="Workspace status summary">
+            <div>
+              <dt>
+                Changes
+              </dt>
+              <dd id="workspace-stat-changes">
+                0
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Risks
+              </dt>
+              <dd id="workspace-stat-risks">
+                0
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Verified
+              </dt>
+              <dd id="workspace-stat-verified">
+                0/0
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Blockers
+              </dt>
+              <dd id="workspace-stat-blockers">
+                0
+              </dd>
+            </div>
+            <div>
+              <dt>
+                Release
+              </dt>
+              <dd id="workspace-stat-release">
+                UNKNOWN
+              </dd>
+            </div>
+          </dl>
+        </aside>
+        <section class="engineering-view" aria-labelledby="engineering-view-title">
+          <h2 id="engineering-view-title" class="sr-only">
+            Engineering View
+          </h2>
+          <section id="guided-workflow" class="guided-workflow" aria-labelledby="guided-workflow-title" data-flow-stage="project">
+            <header class="guided-toolbar">
+              <div>
+                <p class="section-index">ENGINEERING COLLABORATION SESSION</p>
+                <h2 id="guided-workflow-title">Robot Arm · Upper Arm</h2>
+              </div>
+              <div class="guided-toolbar-status" aria-label="Current change session">
+                <span id="guided-revision">IDEA</span>
+                <strong id="guided-session-id">SESSION-014</strong>
+              </div>
+            </header>
+            <div id="guided-workflow-content" class="guided-workflow-content" aria-live="polite"></div>
+          </section>
+          <details id="advanced-console" class="advanced-console">
+            <summary>
+              <span>Advanced source-bound evidence console</span>
+              <small>Immutable hashes, connector snapshots, exact release evidence</small>
+            </summary>
+            <div class="advanced-console-body">
+          <section id="workflow-guide" class="workflow-guide" aria-labelledby="workflow-guide-title" aria-live="polite">
+            <div>
+              <p id="workflow-guide-step" class="section-index">
+                1 / 4 · CONNECT
+              </p>
+              <h3 id="workflow-guide-title">
+                기준 자산부터 연결하세요
+              </h3>
+              <p id="workflow-guide-copy">
+                변경 목표는 PLAN 초안에 보존됩니다. 이제 로봇, CAD, 설계도 또는 PLM snapshot을 읽기 전용 기준으로 연결합니다.
+              </p>
+            </div>
+            <button id="workflow-next-action" type="button" data-target="connect-panel" data-focus="connect-project-id">
+              <span>
+                기준 자산 연결
+              </span>
+              <span aria-hidden="true">
+                →
+              </span>
+            </button>
+          </section>
+          <section id="connect-panel" class="query-panel workflow-panel" aria-labelledby="connect-title" data-flow-stage="project">
+            <div class="section-heading compact">
+              <div>
+                <p class="section-index">
+                  00 · CONNECT/IMPORT
+                </p>
+                <h2 id="connect-title">
+                  기준 자산 snapshot 연결
+                </h2>
+              </div>
+              <p>
+                읽기 전용 connector에서 로봇, CAD, 설계도, PLM 기준 snapshot을 가져옵니다.
+              </p>
+            </div>
+            <form id="connect-form" class="connect-form" novalidate>
+              <label>
+                <span>
+                  Project ID
+                </span>
+                <input id="connect-project-id" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="robot-controller" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Project name
+                </span>
+                <input id="connect-project-name" required placeholder="Controller Release" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Expected version
+                </span>
+                <input id="connect-version" required inputmode="numeric" pattern="[1-9][0-9]*" placeholder="1" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Connector ID
+                </span>
+                <input id="connect-connector-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="fake-plm" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Capture key
+                </span>
+                <input id="connect-capture-key" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="before" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Snapshot ID
+                </span>
+                <input id="connect-snapshot-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="snapshot-11" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Hardware revision
+                </span>
+                <input id="connect-hardware-revision-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="HW-12" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Captured at
+                </span>
+                <input id="connect-captured-at" required type="datetime-local" maxlength="128" autocomplete="off">
+              </label>
+              <div class="button-row wide-field">
+                <button id="sample-connect-button" class="secondary-button" type="button">
+                  <span>
+                    연결 샘플
+                  </span>
+                </button>
+                <button id="create-project-button" class="secondary-button" type="button">
+                  <span>
+                    Project 생성
+                  </span>
+                </button>
+                <button id="connect-button" type="submit">
+                  <span>
+                    Snapshot 가져오기
+                  </span>
+                  <span aria-hidden="true">
+                    →
+                  </span>
+                </button>
+              </div>
+            </form>
+            <div id="connect-status" class="load-status" role="status" aria-live="polite">
+              <strong>
+                CONNECT 대기
+              </strong>
+              <span>
+                FORGE는 source system을 읽기 전용으로 캡처하며 원본 시스템에 쓰지 않습니다.
+              </span>
+            </div>
+            <div id="connect-output" class="result-panel" hidden>
+            </div>
+          </section>
+          <section id="plan-panel" class="workflow-panel plan-workbench" aria-labelledby="plan-title" data-flow-stage="plan">
+            <div class="panel-copy">
+              <p class="section-index">
+                01 · PLAN
+              </p>
+              <h2 id="plan-title">
+                기준 자산에서 변경 영향 검토
+              </h2>
+              <p>
+                만들어진 기계, 로봇, CAD, 설계도, PLM snapshot을 기준으로 잡고 변경하려는 항목이나 운용 시나리오를 선택합니다. FORGE native 결과는 영향 예측이며 release evidence가 아닙니다.
+              </p>
+            </div>
+            <form id="preview-form" class="plan-form" novalidate>
+              <fieldset>
+                <legend>
+                  Asset source
+                </legend>
+                <div class="form-grid">
+                  <label>
+                    <span>
+                      Asset ID
+                    </span>
+                    <input id="asset-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="mobile-base-alpha" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Input kind
+                    </span>
+                    <select id="asset-kind" required>
+                      <option value="plm_snapshot">
+                        PLM snapshot
+                      </option>
+                      <option value="cad_model">
+                        CAD model
+                      </option>
+                      <option value="design_drawing">
+                        Design drawing
+                      </option>
+                      <option value="connected_device">
+                        Connected robot/device
+                      </option>
+                      <option value="manual_snapshot">
+                        Manual snapshot
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      Source system
+                    </span>
+                    <select id="asset-source-system" required>
+                      <option value="plm">
+                        plm
+                      </option>
+                      <option value="cad">
+                        cad
+                      </option>
+                      <option value="manual">
+                        manual
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      Source revision
+                    </span>
+                    <input id="asset-source-revision" required placeholder="HW-12" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label class="wide-field">
+                    <span>
+                      Source locator
+                    </span>
+                    <input id="asset-source-locator" required placeholder="plm://robot-controller/mobile-base-alpha" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label class="wide-field">
+                    <span>
+                      Content hash
+                    </span>
+                    <input id="asset-content-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Captured at
+                    </span>
+                    <input id="asset-captured-at" required type="datetime-local" maxlength="128" autocomplete="off">
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>
+                  Simulation intent
+                </legend>
+                <div class="intent-control" role="radiogroup">
+                  <label>
+                    <input type="radio" name="plan-intent" value="change_impact" checked>
+                    <span>
+                      변경 영향
+                    </span>
+                  </label>
+                  <label>
+                    <input type="radio" name="plan-intent" value="operating_scenario">
+                    <span>
+                      운용 시나리오
+                    </span>
+                  </label>
+                </div>
+                <label id="operating-scenario-field" class="wide-field scenario-field" hidden>
+                  <span>
+                    Scenario to simulate
+                  </span>
+                  <textarea id="operating-scenario" rows="3" maxlength="800" spellcheck="false"
+                    placeholder="예: 경사로 10도, payload 18kg, 주변 온도 40C에서 모터 드라이버 여유율 확인"></textarea>
+                </label>
+                <div id="external-plan-fields" class="form-grid scenario-field" hidden>
+                  <p class="wide-field field-note">
+                    아래 입력은 선택한 한 tier의 운영자 override입니다. 저장 계획은 simulation, bench, HIL, physical_device 네 tier를 각각 생성하며 서로 대체하지 않습니다.
+                    <label>
+                      <span>
+                        External tool ref
+                      </span>
+                      <input id="external-tool-ref" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="sim-suite-v4" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Required test ID
+                      </span>
+                      <input id="external-test-id" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="motor-margin-sim" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Tier to override
+                      </span>
+                      <select id="external-required-tier">
+                        <option value="simulation">
+                          simulation
+                        </option>
+                        <option value="bench">
+                          bench
+                        </option>
+                        <option value="hil">
+                          hil
+                        </option>
+                        <option value="physical_device">
+                          physical_device
+                        </option>
+                      </select>
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Acceptance criteria
+                      </span>
+                      <input id="external-acceptance-criteria" maxlength="128" autocomplete="off"
+                        spellcheck="false" placeholder="driver temperature margin &gt;= 15C and no protocol timeout">
+                    </label>
+                  </p>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>
+                  Project context
+                </legend>
+                <div class="form-grid">
+                  <label>
+                    <span>
+                      Project ID
+                    </span>
+                    <input id="preview-project-id" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="robot-controller" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Expected version
+                    </span>
+                    <input id="preview-version" required inputmode="numeric" pattern="[1-9][0-9]*" placeholder="3" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Scenario ID
+                    </span>
+                    <input id="scenario-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="drv-eol-plan" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Baseline snapshot
+                    </span>
+                    <input id="baseline-snapshot-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="snapshot-11" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Proposed hardware revision
+                    </span>
+                    <input id="proposed-hardware-revision-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="HW-13-proposed" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>
+                  Change item
+                </legend>
+                <div class="form-grid">
+                  <label>
+                    <span>
+                      Change ID
+                    </span>
+                    <input id="change-id" required pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,127}" placeholder="replace-controller-board" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Action
+                    </span>
+                    <select id="change-action" required>
+                      <option value="replace">
+                        replace
+                      </option>
+                      <option value="add">
+                        add
+                      </option>
+                      <option value="remove">
+                        remove
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      Component ID
+                    </span>
+                    <input id="component-id" required placeholder="controller-board" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Rationale code
+                    </span>
+                    <input id="rationale" placeholder="supplier-eol" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+              </fieldset>
+              <div class="endpoint-grid">
+                <fieldset id="current-endpoint">
+                  <legend>
+                    Current component from baseline
+                  </legend>
+                  <div class="form-grid endpoint-fields">
+                    <label>
+                      <span>
+                        Manufacturer
+                      </span>
+                      <input id="before-manufacturer" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Part number
+                      </span>
+                      <input id="before-part-number" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Quantity
+                      </span>
+                      <input id="before-quantity" required inputmode="numeric" pattern="[1-9][0-9]*" value="1" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Artifact ID
+                      </span>
+                      <input id="before-artifact-id" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Domain
+                      </span>
+                      <select id="before-domain">
+                        <option value="hardware">
+                          hardware
+                        </option>
+                        <option value="bom">
+                          bom
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Source system
+                      </span>
+                      <select id="before-source-system">
+                        <option value="plm">
+                          plm
+                        </option>
+                        <option value="cad">
+                          cad
+                        </option>
+                        <option value="erp">
+                          erp
+                        </option>
+                        <option value="supplier">
+                          supplier
+                        </option>
+                        <option value="manual">
+                          manual
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Source revision
+                      </span>
+                      <input id="before-source-revision" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Content hash
+                      </span>
+                      <input id="before-content-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Captured at
+                      </span>
+                      <input id="before-captured-at" required type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>
+                        Signal name
+                      </span>
+                      <input id="before-signal-name" required placeholder="pwm-out" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Pin
+                      </span>
+                      <input id="before-pin" required placeholder="J3-4" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Direction
+                      </span>
+                      <select id="before-direction">
+                        <option value="output">
+                          output
+                        </option>
+                        <option value="input">
+                          input
+                        </option>
+                        <option value="bidirectional">
+                          bidirectional
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Voltage min
+                      </span>
+                      <input id="before-voltage-min" required inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Voltage max
+                      </span>
+                      <input id="before-voltage-max" required inputmode="decimal" placeholder="3.3" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Command min
+                      </span>
+                      <input id="before-command-min" inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Command max
+                      </span>
+                      <input id="before-command-max" inputmode="decimal" placeholder="100" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Safe value
+                      </span>
+                      <input id="before-safe-value" inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Protocol schema hash
+                      </span>
+                      <input id="before-protocol-schema-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Quote supplier
+                      </span>
+                      <input id="before-quote-supplier" data-optional="true" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Unit price
+                      </span>
+                      <input id="before-quote-unit-price" data-optional="true" inputmode="decimal" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Observed at
+                      </span>
+                      <input id="before-quote-observed-at" data-optional="true" type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>
+                        Expires at
+                      </span>
+                      <input id="before-quote-expires-at" data-optional="true" type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Quote source URL
+                      </span>
+                      <input id="before-quote-source-url" data-optional="true" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Quote source hash
+                      </span>
+                      <input id="before-quote-source-hash" data-optional="true" pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset id="candidate-endpoint">
+                  <legend>
+                    Candidate component
+                  </legend>
+                  <div class="form-grid endpoint-fields">
+                    <label>
+                      <span>
+                        Manufacturer
+                      </span>
+                      <input id="after-manufacturer" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Part number
+                      </span>
+                      <input id="after-part-number" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Quantity
+                      </span>
+                      <input id="after-quantity" required inputmode="numeric" pattern="[1-9][0-9]*" value="1" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Artifact ID
+                      </span>
+                      <input id="after-artifact-id" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Domain
+                      </span>
+                      <select id="after-domain">
+                        <option value="hardware">
+                          hardware
+                        </option>
+                        <option value="bom">
+                          bom
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Source system
+                      </span>
+                      <select id="after-source-system">
+                        <option value="plm">
+                          plm
+                        </option>
+                        <option value="cad">
+                          cad
+                        </option>
+                        <option value="erp">
+                          erp
+                        </option>
+                        <option value="supplier">
+                          supplier
+                        </option>
+                        <option value="manual">
+                          manual
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Source revision
+                      </span>
+                      <input id="after-source-revision" required maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Content hash
+                      </span>
+                      <input id="after-content-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Captured at
+                      </span>
+                      <input id="after-captured-at" required type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>
+                        Signal name
+                      </span>
+                      <input id="after-signal-name" required placeholder="pwm-out" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Pin
+                      </span>
+                      <input id="after-pin" required placeholder="J3-7" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Direction
+                      </span>
+                      <select id="after-direction">
+                        <option value="output">
+                          output
+                        </option>
+                        <option value="input">
+                          input
+                        </option>
+                        <option value="bidirectional">
+                          bidirectional
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>
+                        Voltage min
+                      </span>
+                      <input id="after-voltage-min" required inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Voltage max
+                      </span>
+                      <input id="after-voltage-max" required inputmode="decimal" placeholder="3.3" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Command min
+                      </span>
+                      <input id="after-command-min" inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Command max
+                      </span>
+                      <input id="after-command-max" inputmode="decimal" placeholder="100" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Safe value
+                      </span>
+                      <input id="after-safe-value" inputmode="decimal" placeholder="0" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Protocol schema hash
+                      </span>
+                      <input id="after-protocol-schema-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Quote supplier
+                      </span>
+                      <input id="after-quote-supplier" data-optional="true" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Unit price
+                      </span>
+                      <input id="after-quote-unit-price" data-optional="true" inputmode="decimal" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label>
+                      <span>
+                        Observed at
+                      </span>
+                      <input id="after-quote-observed-at" data-optional="true" type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label>
+                      <span>
+                        Expires at
+                      </span>
+                      <input id="after-quote-expires-at" data-optional="true" type="datetime-local" maxlength="128" autocomplete="off">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Quote source URL
+                      </span>
+                      <input id="after-quote-source-url" data-optional="true" maxlength="128" autocomplete="off" spellcheck="false">
+                    </label>
+                    <label class="wide-field">
+                      <span>
+                        Quote source hash
+                      </span>
+                      <input id="after-quote-source-hash" data-optional="true" pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                    </label>
+                  </div>
+                </fieldset>
+              </div>
+              <div class="button-row">
+                <button id="sample-preview-button" class="secondary-button" type="button">
+                  <span>
+                    샘플 채우기
+                  </span>
+                </button>
+                <button id="preview-button" type="submit">
+                  <span>
+                    예상 영향 생성
+                  </span>
+                  <span aria-hidden="true">
+                    →
+                  </span>
+                </button>
+              </div>
+            </form>
+            <aside class="preview-column">
+              <div id="preview-status" class="load-status" role="status" aria-live="polite">
+                <strong>
+                  PLAN 대기
+                </strong>
+                <span>
+                  후보 부품 변경을 입력하면 예상 영향, 필요한 조치, 필요한 시험을 표시합니다.
+                </span>
+              </div>
+              <div id="preview-output" class="result-panel" hidden>
+                <h3 id="preview-result-title">
+                  Preview result
+                </h3>
+              </div>
+              <form id="design-proposal-form" class="session-card" novalidate>
+                <h3>
+                  Engineering Session
+                </h3>
+                <p>
+                  Design alternatives는 planning-only advisory입니다. 실제 변경, CAD/PLM writeback, 장치 제어를 실행하지 않습니다.
+                  <label>
+                    <span>
+                      Goal
+                    </span>
+                    <input id="engineering-goal" required placeholder="controller board EOL 대응 대안 비교" maxlength="128" autocomplete="off" spellcheck="false">
+                  </label>
+                  <label>
+                    <span>
+                      Priority
+                    </span>
+                    <select id="engineering-priority" required>
+                      <option value="reliability">
+                        reliability
+                      </option>
+                      <option value="cost">
+                        cost
+                      </option>
+                      <option value="minimal_change">
+                        minimal change
+                      </option>
+                      <option value="performance">
+                        performance
+                      </option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>
+                      Constraints
+                    </span>
+                    <textarea id="engineering-constraints" rows="3" maxlength="800" spellcheck="false"
+                      placeholder="예: pinout 변경 최소화, 3.3V logic 유지, BOM delta 8% 이하"></textarea>
+                  </label>
+                  <label>
+                    <span>
+                      Preview hash
+                    </span>
+                    <input id="design-preview-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                  </label>
+                  <button id="design-proposal-button" type="submit">
+                    <span>
+                      대안 생성
+                    </span>
+                    <span aria-hidden="true">
+                      →
+                    </span>
+                  </button>
+                </p>
+              </form>
+              <div id="design-proposal-output" class="result-panel" hidden>
+              </div>
+            </aside>
+          </section>
+          <section id="verify-panel" class="query-panel workflow-panel" aria-labelledby="verify-title" data-flow-stage="verify">
+            <div class="section-heading compact">
+              <div>
+                <p class="section-index">
+                  02 · VERIFY
+                </p>
+                <h2 id="verify-title">
+                  계획 대비 실제 변경 검증
+                </h2>
+              </div>
+              <p>
+                preview hash와 실제 change analysis hash를 묶어 누락과 예상 밖 변경을 분리합니다.
+              </p>
+            </div>
+            <div class="verify-mode" role="radiogroup">
+              <label>
+                <input type="radio" name="verify-mode" value="change_preview" checked>
+                <span>
+                  변경 계획 검증
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="verify-mode" value="external_evidence_plan">
+                <span>
+                  외부 증거 계획 검증
+                </span>
+              </label>
+            </div>
+            <form id="plan-verification-form" novalidate>
+              <label>
+                <span>
+                  Project ID
+                </span>
+                <input id="verify-project-id" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="robot-controller" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label>
+                <span>
+                  Expected version
+                </span>
+                <input id="verify-version" required inputmode="numeric" pattern="[1-9][0-9]*" placeholder="5" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="hash-field">
+                <span>
+                  Preview hash
+                </span>
+                <input id="verify-preview-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+              </label>
+              <label id="verify-evidence-plan-field" class="hash-field" hidden>
+                <span>
+                  Evidence plan hash
+                </span>
+                <input id="verify-evidence-plan-hash" pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="hash-field">
+                <span>
+                  Actual analysis hash
+                </span>
+                <input id="verify-analysis-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+              </label>
+              <label id="verify-evidence-ids-field" class="wide-field" hidden>
+                <span>
+                  Imported test evidence IDs
+                </span>
+                <textarea id="verify-evidence-ids" rows="3" maxlength="800" spellcheck="false"
+                  placeholder="canonical evidence ledger의 source-bound test evidence ID를 각 줄에 하나씩 입력"></textarea>
+              </label>
+              <button id="verify-button" type="submit">
+                <span>
+                  누락 검사
+                </span>
+                <span aria-hidden="true">
+                  →
+                </span>
+              </button>
+            </form>
+            <div id="verification-status" class="load-status" role="status" aria-live="polite">
+              <strong>
+                VERIFY 대기
+              </strong>
+              <span>
+                Plan verification과 evidence-plan verification은 release evidence로 사용되지 않습니다.
+              </span>
+            </div>
+            <div id="verification-output" class="result-panel" hidden>
+            </div>
+          </section>
+          <section id="release-panel" class="query-panel workflow-panel" data-flow-stage="release">
+            <div class="section-heading compact">
+              <div>
+                <p class="section-index">
+                  03 · RELEASE
+                </p>
+                <h2 id="query-title">
+                  불변 release decision 조회
+                </h2>
+              </div>
+              <p>
+                project ID와 canonical decision hash를 입력하세요.
+              </p>
+            </div>
+            <form id="decision-form" novalidate>
+              <label>
+                <span>
+                  Project ID
+                </span>
+                <input id="project-id" name="project" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="robot-controller" maxlength="128" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="hash-field">
+                <span>
+                  Decision hash
+                </span>
+                <input id="decision-hash" name="decision" required pattern="sha256:[0-9a-f]{64}" placeholder="sha256:..." maxlength="71" autocomplete="off" spellcheck="false">
+              </label>
+              <button id="load-button" type="submit">
+                <span>
+                  근거 불러오기
+                </span>
+                <span aria-hidden="true">
+                  →
+                </span>
+              </button>
+            </form>
+            <p id="form-help" class="form-help">
+              조회 값은 URL fragment에만 보존되며 서버 요청 로그나 외부 서비스로 전송하지 않습니다.
+            </p>
+          </section>
+          <div id="load-status" class="load-status" role="status" aria-live="polite">
+            <strong>
+              조회 대기
+            </strong>
+            <span>
+              저장된 decision을 선택하면 변경·재시험·증거를 구성합니다.
+            </span>
+          </div>
+          <article id="dashboard" class="dashboard" hidden aria-busy="false">
+            <section id="decision-summary" class="decision-summary" aria-labelledby="summary-title" tabindex="-1">
+              <div>
+                <p class="eyebrow">
+                  RELEASE READINESS
+                </p>
+                <div class="status-line">
+                  <span id="decision-status" class="status-chip">
+                    UNKNOWN
+                  </span>
+                  <span id="evaluated-at" class="timestamp">
+                  </span>
+                </div>
+                <h2 id="summary-title">
+                  판정 근거 요약
+                </h2>
+                <p id="summary-copy" class="summary-copy">
+                </p>
+              </div>
+              <div id="blocker-summary" class="blocker-summary">
+              </div>
+            </section>
+            <dl id="metrics" class="metric-strip">
+            </dl>
+            <nav class="section-nav" aria-label="Release evidence sections">
+              <a href="#changes">
+                변경
+              </a>
+              <a href="#findings">
+                불일치
+              </a>
+              <a href="#retests">
+                재시험
+              </a>
+              <a href="#evidence">
+                증거 tier
+              </a>
+              <a href="#provenance">
+                원본 근거
+              </a>
+            </nav>
+            <section id="changes" class="evidence-section" aria-labelledby="changes-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    04 · HARDWARE REVISION DELTA
+                  </p>
+                  <h2 id="changes-title">
+                    변경된 artifact
+                  </h2>
+                </div>
+                <p id="revision-line" class="revision-line">
+                </p>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">
+                    hardware revision 사이 artifact 변경 목록
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">
+                        Domain
+                      </th>
+                      <th scope="col">
+                        Artifact
+                      </th>
+                      <th scope="col">
+                        Change
+                      </th>
+                      <th scope="col">
+                        Revision
+                      </th>
+                      <th scope="col">
+                        Changed contract
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody id="change-rows">
+                  </tbody>
+                </table>
+              </div>
+              <div id="change-empty" class="empty-inline" hidden>
+                artifact 변경이 없습니다.
+              </div>
+            </section>
+            <section id="findings" class="evidence-section" aria-labelledby="findings-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    05 · CROSS-ARTIFACT CONSISTENCY
+                  </p>
+                  <h2 id="findings-title">
+                    불일치와 blocker
+                  </h2>
+                </div>
+                <p>
+                  pin · voltage · unit · command range · protocol schema
+                </p>
+              </div>
+              <div id="finding-list" class="finding-list">
+              </div>
+            </section>
+            <section id="retests" class="evidence-section" aria-labelledby="retests-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    06 · AUTOMATIC RETEST SCOPE
+                  </p>
+                  <h2 id="retests-title">
+                    필수 재시험
+                  </h2>
+                </div>
+                <p>
+                  변경 facet과 정확한 evidence tier에 의해 자동 지정됩니다.
+                </p>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <caption class="sr-only">
+                    필수 재시험 상태와 근거
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">
+                        Test
+                      </th>
+                      <th scope="col">
+                        Required tier
+                      </th>
+                      <th scope="col">
+                        Status
+                      </th>
+                      <th scope="col">
+                        Reason
+                      </th>
+                      <th scope="col">
+                        Evidence
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody id="retest-rows">
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <section id="evidence" class="evidence-section" aria-labelledby="evidence-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    07 · EVIDENCE ENVIRONMENTS
+                  </p>
+                  <h2 id="evidence-title">
+                    검증 환경은 합치지 않습니다
+                  </h2>
+                </div>
+                <p>
+                  simulation, bench, HIL, 실제 장치 결과를 독립적으로 표시합니다.
+                </p>
+              </div>
+              <div id="tier-grid" class="tier-grid">
+              </div>
+              <details id="rejected-details" class="details-card">
+                <summary>
+                  거부되거나 대체된 증거
+                  <span id="rejected-count">
+                  </span>
+                </summary>
+                <ul id="rejected-list" class="code-list">
+                </ul>
+              </details>
+            </section>
+            <section id="provenance" class="evidence-section" aria-labelledby="provenance-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    08 · SOURCE PROVENANCE
+                  </p>
+                  <h2 id="provenance-title">
+                    BOM · firmware · canonical binding
+                  </h2>
+                </div>
+                <p>
+                  출처, 조회 시점, toolchain, source revision과 hash를 확인합니다.
+                </p>
+              </div>
+              <div class="provenance-grid">
+                <section class="provenance-card">
+                  <h3 id="bom-title">
+                    BOM 가격 근거
+                  </h3>
+                  <div id="bom-provenance">
+                  </div>
+                </section>
+                <section class="provenance-card">
+                  <h3 id="build-title">
+                    Firmware build
+                  </h3>
+                  <div id="build-provenance">
+                  </div>
+                </section>
+              </div>
+              <details class="details-card">
+                <summary>
+                  Canonical IDs와 hash
+                </summary>
+                <dl id="canonical-bindings" class="binding-list">
+                </dl>
+              </details>
+            </section>
+            <section id="release-diagnosis" class="evidence-section" aria-labelledby="release-diagnosis-title">
+              <div class="section-heading">
+                <div>
+                  <p class="section-index">
+                    09 · BLOCKER DIAGNOSIS
+                  </p>
+                  <h2 id="release-diagnosis-title">
+                    증거 기반 blocker 진단
+                  </h2>
+                </div>
+                <p>
+                  Diagnosis와 fix recommendations는 제출된 release evidence가 있을 때만 의미가 있으며 실행 지시가 아닙니다.
+                </p>
+              </div>
+              <form id="release-diagnosis-form" class="inline-form" novalidate>
+                <label>
+                  <span>
+                    Project ID
+                  </span>
+                  <input id="diagnosis-project-id" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" maxlength="128" autocomplete="off" spellcheck="false">
+                </label>
+                <label class="hash-field">
+                  <span>
+                    Decision hash
+                  </span>
+                  <input id="diagnosis-decision-hash" required pattern="sha256:[0-9a-f]{64}" maxlength="71" autocomplete="off" spellcheck="false">
+                </label>
+                <button id="diagnosis-button" type="submit">
+                  <span>
+                    진단 생성
+                  </span>
+                  <span aria-hidden="true">
+                    →
+                  </span>
+                </button>
+              </form>
+              <div id="diagnosis-status" class="load-status" role="status" aria-live="polite">
+                <strong>
+                  진단 대기
+                </strong>
+                <span>
+                  FORGE는 blocker 원인과 fix proposal을 증거에 묶어 제안만 합니다.
+                </span>
+              </div>
+              <div id="diagnosis-output" class="result-panel" hidden>
+              </div>
+            </section>
+          </article>
+            </div>
+          </details>
+        </section>
+        <aside id="forge-ai-panel" class="forge-ai-panel" aria-labelledby="forge-ai-title" hidden>
+          <header class="forge-ai-header">
+            <div>
+              <p class="section-index">FORGE AI</p>
+              <h2 id="forge-ai-title">Engineering context</h2>
+            </div>
+            <button id="forge-ai-toggle" class="icon-button" type="button" aria-expanded="true" aria-controls="forge-ai-content" title="Context panel 접기">⇥</button>
+          </header>
+          <div id="forge-ai-content">
+            <p>
+              대화에 연결된 자산, 선택한 플랜과 증거 경계를 고정해 보여줍니다.
+            </p>
+            <section id="conversation-context" class="conversation-context" aria-label="Engineering conversation context">
+              <dl>
+                <div>
+                  <dt>Connected asset</dt>
+                  <dd id="context-asset">Not connected</dd>
+                </div>
+                <div>
+                  <dt>Change request</dt>
+                  <dd id="context-change">Waiting for input</dd>
+                </div>
+                <div>
+                  <dt>Plan</dt>
+                  <dd id="context-plan">No plan selected</dd>
+                </div>
+                <div>
+                  <dt>Simulation</dt>
+                  <dd id="context-simulation">Not run</dd>
+                </div>
+                <div>
+                  <dt>Goal</dt>
+                  <dd id="context-goal">Waiting for conversation</dd>
+                </div>
+                <div>
+                  <dt>Constraints</dt>
+                  <dd id="context-constraints">Not defined</dd>
+                </div>
+                <div>
+                  <dt>Affected systems</dt>
+                  <dd id="context-affected">Not analyzed</dd>
+                </div>
+                <div>
+                  <dt>Required validation</dt>
+                  <dd id="context-required">Not assigned</dd>
+                </div>
+                <div>
+                  <dt>Evidence authority</dt>
+                  <dd>Imported source-bound evidence only</dd>
+                </div>
+              </dl>
+              <p class="context-boundary">
+                Conversation and planning simulation are browser-local. No CAD writeback, device control or release authorization.
+              </p>
+            </section>
+          <form id="forge-ai-form" class="forge-ai-form" novalidate hidden>
+            <label>
+              <span>
+                Ask FORGE
+              </span>
+              <textarea id="forge-ai-input" rows="5" maxlength="800" spellcheck="false" required
+                placeholder="예: A안으로 가되 최고속도는 유지하고 싶어."></textarea>
+            </label>
+            <div class="priority-actions" aria-label="Priority shortcuts">
+              <button class="priority-action" type="button" data-priority="performance">
+                Keep top speed
+              </button>
+              <button class="priority-action" type="button" data-priority="minimal_change">
+                Minimum changes
+              </button>
+              <button class="priority-action" type="button" data-priority="cost">
+                Lowest cost
+              </button>
+              <button class="priority-action" type="button" data-priority="reliability">
+                Reliability
+              </button>
+            </div>
+            <button id="forge-ai-submit" type="submit">
+              <span>
+                PLAN draft에 반영
+              </span>
+              <span aria-hidden="true">
+                →
+              </span>
+            </button>
+            <div id="forge-ai-status" class="load-status compact-status" role="status" aria-live="polite">
+              <strong>
+                Local draft
+              </strong>
+              <span>
+                질문/응답 기록은 구조화된 draft context로만 취급합니다.
+              </span>
+            </div>
+            <section id="forge-ai-transcript" class="forge-ai-transcript" aria-label="FORGE collaboration transcript">
+              <article>
+                <strong>
+                  FORGE
+                </strong>
+                <p>
+                  변경 방향을 바꿀 수 있는 우선순위를 선택하거나 직접 입력하세요.
+                </p>
+              </article>
+            </section>
+          </form>
+          </div>
+        </aside>
       </div>
-
-      <article id="dashboard" class="dashboard" hidden aria-busy="false">
-        <section id="decision-summary" class="decision-summary" tabindex="-1" aria-labelledby="summary-title">
-          <div>
-            <p class="eyebrow">RELEASE READINESS</p>
-            <div class="status-line">
-              <span id="decision-status" class="status-chip">UNKNOWN</span>
-              <span id="evaluated-at" class="timestamp"></span>
-            </div>
-            <h2 id="summary-title">판정 근거 요약</h2>
-            <p id="summary-copy" class="summary-copy"></p>
-          </div>
-          <div id="blocker-summary" class="blocker-summary"></div>
-        </section>
-
-        <dl id="metrics" class="metric-strip"></dl>
-
-        <nav class="section-nav" aria-label="판정 근거 섹션">
-          <a href="#changes">변경</a>
-          <a href="#findings">불일치</a>
-          <a href="#retests">재시험</a>
-          <a href="#evidence">증거 tier</a>
-          <a href="#provenance">원본 근거</a>
-        </nav>
-
-        <section id="changes" class="evidence-section" aria-labelledby="changes-title">
-          <div class="section-heading">
-            <div>
-              <p class="section-index">01 · HARDWARE REVISION DELTA</p>
-              <h2 id="changes-title">변경된 artifact</h2>
-            </div>
-            <p id="revision-line" class="revision-line"></p>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <caption class="sr-only">hardware revision 사이 artifact 변경 목록</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Domain</th>
-                  <th scope="col">Artifact</th>
-                  <th scope="col">Change</th>
-                  <th scope="col">Revision</th>
-                  <th scope="col">Changed contract</th>
-                </tr>
-              </thead>
-              <tbody id="change-rows"></tbody>
-            </table>
-          </div>
-          <div id="change-empty" class="empty-inline" hidden>artifact 변경이 없습니다.</div>
-        </section>
-
-        <section id="findings" class="evidence-section" aria-labelledby="findings-title">
-          <div class="section-heading">
-            <div>
-              <p class="section-index">02 · CROSS-ARTIFACT CONSISTENCY</p>
-              <h2 id="findings-title">불일치와 blocker</h2>
-            </div>
-            <p>pin · voltage · unit · command range · protocol schema</p>
-          </div>
-          <div id="finding-list" class="finding-list"></div>
-        </section>
-
-        <section id="retests" class="evidence-section" aria-labelledby="retests-title">
-          <div class="section-heading">
-            <div>
-              <p class="section-index">03 · AUTOMATIC RETEST SCOPE</p>
-              <h2 id="retests-title">필수 재시험</h2>
-            </div>
-            <p>변경 facet과 정확한 evidence tier에 의해 자동 지정됩니다.</p>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <caption class="sr-only">필수 재시험 상태와 근거</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Test</th>
-                  <th scope="col">Required tier</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Reason</th>
-                  <th scope="col">Evidence</th>
-                </tr>
-              </thead>
-              <tbody id="retest-rows"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section id="evidence" class="evidence-section" aria-labelledby="evidence-title">
-          <div class="section-heading">
-            <div>
-              <p class="section-index">04 · EVIDENCE ENVIRONMENTS</p>
-              <h2 id="evidence-title">검증 환경은 합치지 않습니다</h2>
-            </div>
-            <p>simulation, bench, HIL, 실제 장치 결과를 독립적으로 표시합니다.</p>
-          </div>
-          <div id="tier-grid" class="tier-grid"></div>
-          <details id="rejected-details" class="details-card">
-            <summary>거부되거나 대체된 증거 <span id="rejected-count"></span></summary>
-            <ul id="rejected-list" class="code-list"></ul>
-          </details>
-        </section>
-
-        <section id="provenance" class="evidence-section" aria-labelledby="provenance-title">
-          <div class="section-heading">
-            <div>
-              <p class="section-index">05 · SOURCE PROVENANCE</p>
-              <h2 id="provenance-title">BOM · firmware · canonical binding</h2>
-            </div>
-            <p>출처, 조회 시점, toolchain, source revision과 hash를 확인합니다.</p>
-          </div>
-          <div class="provenance-grid">
-            <section class="provenance-card" aria-labelledby="bom-title">
-              <h3 id="bom-title">BOM 가격 근거</h3>
-              <div id="bom-provenance"></div>
-            </section>
-            <section class="provenance-card" aria-labelledby="build-title">
-              <h3 id="build-title">Firmware build</h3>
-              <div id="build-provenance"></div>
-            </section>
-          </div>
-          <details class="details-card">
-            <summary>Canonical IDs와 hash</summary>
-            <dl id="canonical-bindings" class="binding-list"></dl>
-          </details>
-        </section>
-      </article>
-
       <noscript>
         <section class="load-status error">
-          <strong>JavaScript가 비활성화됨</strong>
-          <span>이 읽기 전용 대시보드는 decision JSON을 안전한 DOM으로 구성하기 위해 JavaScript가 필요합니다.</span>
+          <strong>
+            JavaScript가 비활성화됨
+          </strong>
+          <span>
+            이 대시보드는 decision JSON을 안전한 DOM으로 구성하기 위해 JavaScript가 필요합니다.
+          </span>
         </section>
       </noscript>
     </main>
-
     <footer>
-      <span>FORGE R0 · evidence-based validation layer</span>
-      <span>READY는 인증이나 생산 승인을 의미하지 않습니다.</span>
+      <span>
+        FORGE · TALK → CONFIRM → SIMULATE → REVISE → VERIFY
+      </span>
+      <span>
+        READY는 인증이나 생산 승인을 의미하지 않습니다.
+      </span>
     </footer>
   </body>
 </html>

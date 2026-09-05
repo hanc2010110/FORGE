@@ -140,6 +140,29 @@ class ReadOnlyConnectorTests(unittest.TestCase):
                 | {"snapshot_hash": "sha256:" + "0" * 64}
             )
 
+    def test_registry_lists_manifests_in_canonical_order(self) -> None:
+        registry = ConnectorRegistry()
+        second = adapter()
+        first_manifest = second.manifest.model_copy(
+            update={
+                "adapter_id": "a-adapter",
+                "manifest_hash": adapter_manifest_hash(
+                    adapter_id="a-adapter",
+                    adapter_version=second.manifest.adapter_version,
+                    adapter_artifact_hash=second.manifest.adapter_artifact_hash,
+                    source_system=second.manifest.source_system,
+                    capabilities=second.manifest.capabilities,
+                ),
+            }
+        )
+        registry.register(second)
+        registry.register(InMemoryReadOnlyAdapter(first_manifest, {}))
+
+        self.assertEqual(
+            tuple(item.adapter_id for item in registry.list_manifests()),
+            ("a-adapter", "fake-git"),
+        )
+
     def test_request_has_no_path_surface_and_rejects_traversal_or_local_time(
         self,
     ) -> None:
