@@ -401,9 +401,12 @@ integrations:
 4. Verify local health, backup and non-overwriting restore. These are implemented;
    secrets and hosted monitoring remain public/multi-tenant gates.
 5. Parse one high-value CAD geometry path before broad external integration. Bounded
-   ASCII/binary STL parsing and a read-only canvas are implemented. Next connect
-   source-bound Git/CI, then add STEP/SolidWorks metadata before CAE, device or PLM
-   breadth.
+   ASCII/binary STL parsing and a read-only canvas are implemented. The first
+   credentialed Git/CI path is now a separate `GitHubIntegrationService` with a
+   fixed-host network transport, non-persistent short-lived token, local key vault,
+   canonical evidence record and exact commit-to-Actions binding. Its persistent
+   connect/sync mutations use a prepared/completed recovery journal, and exact-SHA
+   Actions collection fails closed at GitHub's 1,000-result filtered-search cap.
 
 STEP/SolidWorks parsing, CAE execution, robot/bench/HIL transport, production
 Git/PLM/CI/BOM credentials, SSO and a hosted LLM remain outside the dependency-free
@@ -418,9 +421,25 @@ engineering rules to the domain modules (`impact_engine`, `preview_engine`,
 `release_readiness`, `conversation_runtime`, `local_rag`, and `cad_geometry`). It must
 not absorb connector SDK, hosted-model, CAD-kernel, or device-transport logic. Before
 the first credentialed connector, hosted LLM, SSO provider, or multi-tenant deployment,
-split the matching adapter/application service from this local facade and replace the
-loopback route branches with registered domain routers. That decomposition is an
-explicit production-entry gate, not hidden local-pilot completeness.
+split the matching adapter/application service from this local facade. The GitHub
+vertical slice satisfies this boundary: `ReleaseIntegrationService` remains unchanged,
+while `IntegrationHub` owns the typed provider catalog and the dedicated GitHub service
+owns credentials, authentication, transport and evidence normalization. Future drivers
+must use the same separation instead of adding SDK logic to the release facade.
+
+### Integration Hub contract
+
+- Settings is the single operator entry point for Git, CAD/PLM, CAE/simulation,
+  CI/test, BOM/supply, AI/RAG and robot/lab connections.
+- Every provider advertises typed credentials and canonically ordered read-only
+  capabilities. The catalog never stores credential values.
+- `live`, `local`, and `adapter_required` are product truth states. A catalog card
+  cannot claim connection merely because a future provider is listed.
+- Network drivers must fix their upstream host, bound time and response size, redact
+  secrets and persist normalized source/time/hash evidence rather than bearer tokens.
+- Device, Bench and HIL drivers require a mutually authenticated edge agent and remain
+  evidence-read paths; the hosted FORGE service does not receive a generic command or
+  device-control route.
 
 The local extractive RAG provider may combine at most three retrieved chunks, cites
 each excerpt separately, and redacts English and Korean release-authority phrases.

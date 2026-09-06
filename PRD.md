@@ -331,7 +331,7 @@ Output:
 
 ## 10. API Acceptance Contracts
 
-All R0/R1 routes use `/api/v1`, bind only to `127.0.0.1`, and retain Host, Origin, CSRF, content-type, body-limit, idempotency and optimistic-concurrency protections.
+All R0/R1 routes use `/api/v1` and bind only to `127.0.0.1`. Every POST retains Host, Origin, CSRF, content-type and body-limit protections. Project mutations additionally require `Idempotency-Key` and optimistic `If-Match` concurrency (except project creation). Persistent GitHub integration mutations require `Idempotency-Key`; connection tests are explicitly non-persistent and do not require it.
 
 Implemented R0/R1 routes:
 
@@ -339,7 +339,12 @@ Implemented R0/R1 routes:
 | --- | --- | --- |
 | POST | `/api/v1/projects` | create project and release policy |
 | GET | `/api/v1/projects/{project}` | read project |
-| GET | `/api/v1/connectors` | read connector manifests |
+| GET | `/api/v1/connectors` | read local connector manifests |
+| GET | `/api/v1/integrations` | read typed future/live integration catalog |
+| GET | `/api/v1/integrations/github` | read redacted GitHub connection status |
+| POST | `/api/v1/integrations/github/test` | test App credentials without persistence |
+| POST | `/api/v1/integrations/github` | verify and store local GitHub App configuration |
+| POST | `/api/v1/integrations/github/sync` | capture commit/PR/exact-SHA Actions evidence |
 | POST | `/api/v1/projects/{project}/connector-snapshots` | store read-only snapshot |
 | GET | `/api/v1/projects/{project}/connector-snapshots/{snapshot_id}` | read snapshot |
 | POST | `/api/v1/projects/{project}/change-impacts` | store actual change impact assessment |
@@ -371,8 +376,13 @@ Structured resolution route contracts:
 API acceptance:
 
 - mutation responses include project version
-- exact idempotent replay returns the original response
-- conflicting idempotency payloads are rejected
+- project and persistent GitHub integration mutations require an opaque `Idempotency-Key`
+- exact idempotent replay returns the original response and `Idempotency-Replayed: true`
+- conflicting idempotency payloads are rejected with 409
+- GitHub connect/sync writes a recoverable prepared result before local mutation, so an
+  interrupted retry with the same key completes locally without repeating GitHub calls
+- exact-SHA Actions collection rejects undocumented status/conclusion values and fails
+  closed when GitHub's filtered-search cap exceeds 1,000 runs
 - stale `If-Match` versions are rejected
 - cross-project hash binding is rejected
 - duplicate JSON keys and unknown fields are rejected

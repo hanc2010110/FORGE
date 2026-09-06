@@ -375,7 +375,11 @@ function predeployEssentialsCard() {
     ["STL parsing / 3D viewer", "complete", "ASCII/binary geometry, hashes and read-only canvas"],
     ["CAE / Dynamics simulator", "blocked", "deterministic fixture only"],
     ["Robot / Bench / HIL", "blocked", "no device control or live telemetry"],
-    ["Git / PLM / CI / BOM suppliers", "partial", "loopback evidence contracts only"],
+    [
+      "Git / PLM / CI / BOM suppliers",
+      "partial",
+      "GitHub live read-only · remaining adapters typed",
+    ],
     ["Health / Backup / Restore", "complete", "deep readiness and verified recovery"],
     ["SSO / Hosted monitoring / Multitenancy", "partial", "required before public SaaS"],
   ]) {
@@ -1574,6 +1578,171 @@ async function loadConnectors() {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.code || `http_${response.status}`);
   return payload.data || [];
+}
+
+async function githubRequest(path, payload = null) {
+  const options = {
+    method: payload === null ? "GET" : "POST",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    credentials: "same-origin",
+  };
+  if (payload !== null) {
+    const csrf = await sessionToken();
+    options.headers["Content-Type"] = "application/json";
+    options.headers["X-FORGE-CSRF"] = csrf;
+    options.headers["Idempotency-Key"] = `github-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    options.body = JSON.stringify(payload);
+  }
+  const response = await fetch(path, options);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result?.error?.code || `http_${response.status}`);
+  return result.data;
+}
+
+function renderIntegrationCatalog(entries) {
+  const catalog = byId("integration-catalog");
+  replace(catalog);
+  for (const entry of entries || []) {
+    const provider = entry.provider || {};
+    const card = element("article", `integration-card ${entry.connection_state || ""}`);
+    card.append(
+      element("strong", "", provider.name),
+      element("small", "", display(provider.category).replaceAll("_", " · ")),
+      element("span", "catalog-state", display(entry.status_summary)),
+    );
+    card.title = `${display(provider.auth_strategy)} · ${(provider.capabilities || []).join(", ")}`;
+    catalog.append(card);
+  }
+  const connected = (entries || []).filter((entry) => ["connected", "local_available"].includes(entry.connection_state)).length;
+  byId("integration-catalog-count").textContent = `${connected} / ${(entries || []).length} available`;
+}
+
+async function loadIntegrationCatalog() {
+  const entries = await githubRequest("/api/v1/integrations");
+  renderIntegrationCatalog(entries);
+}
+
+function setGitHubSettingsStatus(state, title, copy) {
+  const status = byId("github-settings-status");
+  status.className = `settings-status ${state}`;
+  replace(status, element("strong", "", title), element("span", "", copy));
+}
+
+function renderGitHubEvidence(evidence, freshnessState = "fresh", ageSeconds = 0) {
+  const summary = byId("github-evidence-summary");
+  if (!evidence) {
+    summary.hidden = true;
+    return;
+  }
+  summary.hidden = false;
+  const latestRun = evidence.workflow_runs?.[0];
+  const conclusion = display(latestRun?.conclusion || latestRun?.status, "NO RUN").toUpperCase();
+  const actions = byId("github-actions-state");
+  actions.textContent = conclusion;
+  actions.className = `connection-badge ${conclusion === "SUCCESS" ? "success" : conclusion === "FAILURE" ? "failure" : ""}`;
+  const factList = byId("github-evidence-facts");
+  replace(factList);
+  for (const [label, value] of [
+    ["Repository", evidence.repository_full_name],
+    ["Exact commit", evidence.head_sha],
+    ["Commit time", formatTime(evidence.head_commit_at)],
+    ["Collected", formatTime(evidence.collected_at)],
+    [
+      "Freshness",
+      `${display(freshnessState, "missing").toUpperCase()}${Number.isFinite(ageSeconds) ? ` · ${ageSeconds}s` : ""}`,
+    ],
+    ["Changed files", evidence.total_changed_files],
+    ["Open PRs", evidence.open_pull_requests?.length || 0],
+    ["Evidence hash", evidence.evidence_hash],
+  ]) {
+    const row = element("div");
+    row.append(element("dt", "", label), element("dd", "", value));
+    factList.append(row);
+  }
+  const files = byId("github-changed-files");
+  replace(files);
+  const changedFiles = evidence.changed_files || [];
+  if (!changedFiles.length) files.append(element("span", "", "변경 파일 없음"));
+  for (const path of changedFiles) files.append(element("code", "", path));
+}
+
+function renderGitHubStatus(status) {
+  const connected = Boolean(status?.configured);
+  const badge = byId("github-connection-badge");
+  badge.textContent = connected ? "Connected" : "Not connected";
+  badge.className = `connection-badge ${connected ? "connected" : ""}`;
+  byId("github-sync-button").disabled = !connected;
+  byId("github-readiness-dot").className = `ready-dot ${connected ? "complete" : "partial"}`;
+  byId("github-readiness-label").textContent = connected
+    ? `GitHub · ${status.repository_full_name}`
+    : "GitHub App not connected";
+  if (connected) {
+    byId("github-app-id").value = status.app_id;
+    byId("github-installation-id").value = status.installation_id;
+    const [owner, repository] = status.repository_full_name.split("/", 2);
+    byId("github-owner").value = owner;
+    byId("github-repository").value = repository;
+    byId("github-key-help").textContent = `${status.private_key_filename} · ${status.private_key_sha256} · 키 내용과 토큰은 표시하지 않습니다.`;
+    setGitHubSettingsStatus(
+      "success",
+      "GitHub App 연결됨",
+      `${status.repository_full_name} · ${formatTime(status.connected_at)}`,
+    );
+  }
+  renderGitHubEvidence(
+    status?.latest_evidence,
+    status?.latest_evidence_state,
+    status?.latest_evidence_age_seconds,
+  );
+}
+
+async function loadGitHubStatus() {
+  const status = await githubRequest("/api/v1/integrations/github");
+  renderGitHubStatus(status);
+  return status;
+}
+
+async function githubConnectPayload() {
+  const form = byId("github-settings-form");
+  if (!form.reportValidity()) throw new Error("missing_github_settings");
+  const file = byId("github-private-key").files?.[0];
+  if (!file) throw new Error("missing_private_key");
+  if (file.size > 32768) throw new Error("private_key_too_large");
+  if (!/\.pem$/i.test(file.name)) throw new Error("private_key_must_be_pem");
+  return {
+    app_id: inputValue("github-app-id"),
+    installation_id: inputValue("github-installation-id"),
+    owner: inputValue("github-owner"),
+    repository: inputValue("github-repository"),
+    private_key_filename: file.name,
+    private_key_pem: await file.text(),
+  };
+}
+
+async function runGitHubConnection(action) {
+  const button = byId(action === "test" ? "github-test-button" : "github-connect-button");
+  button.disabled = true;
+  setGitHubSettingsStatus("loading", action === "test" ? "연결 시험 중" : "안전하게 저장 중", "GitHub App ID, installation, repository와 read-only 권한을 검증합니다.");
+  try {
+    const payload = await githubConnectPayload();
+    const path = action === "test" ? "/api/v1/integrations/github/test" : "/api/v1/integrations/github";
+    const result = await githubRequest(path, payload);
+    setGitHubSettingsStatus(
+      "success",
+      action === "test" ? "연결 시험 성공" : "GitHub App 연결 완료",
+      `${result.repository_full_name} · ${result.permissions?.join(", ") || "read-only"}`,
+    );
+    if (action === "connect") {
+      byId("github-private-key").value = "";
+      await Promise.all([loadGitHubStatus(), loadIntegrationCatalog()]);
+    }
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "unknown_error";
+    setGitHubSettingsStatus("error", "GitHub 연결 실패", `오류 코드: ${code}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function quantity(value, unit, dimension, identifier) {
@@ -3495,6 +3664,42 @@ for (const control of document.querySelectorAll("input[name='verify-mode']")) {
 }
 byId("sample-connect-button").addEventListener("click", fillSampleConnect);
 byId("sample-preview-button").addEventListener("click", fillSamplePreview);
+byId("open-settings-button").addEventListener("click", () => {
+  const dialog = byId("settings-dialog");
+  dialog.showModal();
+  if (IS_FILE_PROTOCOL) {
+    setGitHubSettingsStatus("error", "서버 모드 필요", "터미널에서 ./forge dashboard를 실행하고 표시된 http://127.0.0.1 주소로 여세요.");
+    return;
+  }
+  Promise.all([loadGitHubStatus(), loadIntegrationCatalog()]).catch((error) => {
+    const code = error instanceof Error ? error.message : "unknown_error";
+    setGitHubSettingsStatus("error", "설정 조회 실패", `오류 코드: ${code}`);
+  });
+});
+byId("close-settings-button").addEventListener("click", () => byId("settings-dialog").close());
+byId("settings-dialog").addEventListener("click", (event) => {
+  if (event.target === byId("settings-dialog")) byId("settings-dialog").close();
+});
+byId("github-test-button").addEventListener("click", () => runGitHubConnection("test"));
+byId("github-settings-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  runGitHubConnection("connect");
+});
+byId("github-sync-button").addEventListener("click", async () => {
+  const button = byId("github-sync-button");
+  button.disabled = true;
+  setGitHubSettingsStatus("loading", "GitHub 증거 동기화 중", "최신 commit, changed files, open PR, exact-commit Actions를 수집합니다.");
+  try {
+    const evidence = await githubRequest("/api/v1/integrations/github/sync", {});
+    renderGitHubEvidence(evidence, "fresh", 0);
+    setGitHubSettingsStatus("success", "증거 동기화 완료", `${evidence.head_sha} · ${evidence.evidence_hash}`);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "unknown_error";
+    setGitHubSettingsStatus("error", "증거 동기화 실패", `오류 코드: ${code}`);
+  } finally {
+    button.disabled = false;
+  }
+});
 if ("IntersectionObserver" in window) {
   const stageObserver = new IntersectionObserver((entries) => {
     const visible = entries
@@ -3515,6 +3720,8 @@ appendCollaborationMessage("FORGE", "변경 목표를 입력하거나 우선순�
 if (IS_FILE_PROTOCOL) {
   enterFileProtocolMode();
 } else {
+  loadIntegrationCatalog().catch(() => undefined);
+  loadGitHubStatus().catch(() => undefined);
   loadConnectors()
     .then((connectors) => {
       renderConnectorList(connectors);

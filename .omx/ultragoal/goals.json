@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-09-03T11:19:09.276Z",
+  "updatedAt": "2026-09-06T05:36:07.276Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -299,6 +299,66 @@
       "evidence": "Integrated RBAC/audit, operational health/verified backup/non-overwrite restore, project-scoped cited local RAG with English/Korean release-authority guard and up to three source citations, bounded ASCII/binary STL persistence plus contextual 3D canvas, and GPT-style chat-first UX. README/PRD/DESIGN quantify local deployment-pilot completeness conservatively at about 80% and explicitly gate hosted LLM, STEP/SolidWorks/CAE/device/live enterprise connectors, SSO and multitenancy. Browser desktop/mobile/STL QA passed; ./forge verify passed Ruff, format, strict mypy, lock/pip, 250 tests and 90% coverage; independent code review APPROVE with zero findings and architect CLEAR.",
       "startedAt": "2026-09-03T10:43:47.754Z",
       "completedAt": "2026-09-03T11:19:09.276Z"
+    },
+    {
+      "id": "G023-github-app-guided-integration",
+      "title": "GitHub App guided integration",
+      "objective": "Add an in-product settings experience that securely configures and tests a read-only GitHub App connection, collects repository commit/change/PR/Actions evidence with exact provenance, adds CI verification, and validates the end-to-end local operator flow.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-05T01:42:18.238Z",
+      "updatedAt": "2026-09-05T02:50:18.427Z",
+      "evidence": "Implemented secure read-only GitHub App Settings, credential test/connect/status/sync routes, exact commit/PR/Actions provenance, local key integrity boundaries, GitHub Actions verification workflow, 262 passing tests at 90% coverage, and desktop browser QA with 22 provider cards and zero console errors.",
+      "startedAt": "2026-09-05T01:42:23.282Z",
+      "completedAt": "2026-09-05T02:50:18.427Z"
+    },
+    {
+      "id": "G024-universal-engineering-integration-hu",
+      "title": "Universal engineering Integration Hub",
+      "objective": "Generalize the GitHub settings work into a secure Integration Hub with typed provider catalog, pluggable read-only driver contracts, credential boundaries, connection status APIs, and GPT-style settings surfaces for Git, PLM, CAD, CAE, CI, BOM suppliers, LLM/RAG, and robot/bench/HIL systems; keep unimplemented drivers explicitly unavailable and use GitHub as the first live driver.",
+      "status": "review_blocked",
+      "attempt": 1,
+      "createdAt": "2026-09-05T01:57:46.923Z",
+      "updatedAt": "2026-09-05T03:22:54.300Z",
+      "evidence": "Independent code-reviewer found P1-equivalent: raw_files[:100] silently truncates while stats.total is line changes, not file count; also requested explicit freshness state and malformed Content-Length handling.",
+      "startedAt": "2026-09-05T02:50:23.951Z",
+      "reviewBlockedAt": "2026-09-05T03:22:54.300Z"
+    },
+    {
+      "id": "G025-resolve-github-changed-file-complete",
+      "title": "Resolve GitHub changed-file completeness blocker",
+      "objective": "Make GitHub commit evidence fail closed on incomplete pagination, report actual changed-file counts, reject malformed upstream lengths, and verify stale/fresh evidence state before final review.",
+      "status": "review_blocked",
+      "attempt": 1,
+      "createdAt": "2026-09-05T03:22:54.301Z",
+      "updatedAt": "2026-09-06T03:11:52.259Z",
+      "evidence": "Independent code-reviewer REQUEST_CHANGES: GitHub credential/evidence POST routes lacked the documented idempotency contract; PR and Actions evidence silently sealed only the first 20 results; workflow conclusion coercion and transient test-key staging were nonblocking hardening findings.",
+      "startedAt": "2026-09-05T03:22:59.096Z",
+      "reviewBlockedAt": "2026-09-06T03:11:52.259Z"
+    },
+    {
+      "id": "G026-resolve-final-github-mutation-and-co",
+      "title": "Resolve final GitHub mutation and collection blockers",
+      "objective": "Add explicit idempotency for persistent GitHub integration mutations, collect pull-request and exact-SHA Actions evidence completely within fail-closed bounds, strictly validate workflow conclusions, document transient credential-test staging, and repeat all final quality gates.",
+      "status": "review_blocked",
+      "attempt": 1,
+      "createdAt": "2026-09-06T03:11:52.259Z",
+      "updatedAt": "2026-09-06T05:13:36.976Z",
+      "evidence": "Independent code reviewer REQUEST_CHANGES: arbitrary workflow status/conclusion strings were accepted; workflow run pagination exceeded GitHub official 1000-result search cap; connect and sync could persist their mutation before the idempotency result, so a crash could cause a retry to repeat upstream work. Architect review was otherwise CLEAR.",
+      "startedAt": "2026-09-06T03:11:57.077Z",
+      "reviewBlockedAt": "2026-09-06T05:13:36.976Z"
+    },
+    {
+      "id": "G027-resolve-final-github-durability-and",
+      "title": "Resolve final GitHub durability and Actions contract blockers",
+      "objective": "Enforce official GitHub Actions status and conclusion contracts, fail closed at the official 1000-run search cap, make connect and sync idempotency crash-recoverable without repeated upstream calls, add regression tests and documentation, rerun full verification and the mandatory independent final reviews.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-09-06T05:13:36.976Z",
+      "updatedAt": "2026-09-06T05:36:07.276Z",
+      "evidence": "G027 complete: strict official GitHub Actions status/conclusion validation; fail-closed 1,000-run exact-SHA cap; prepared/completed crash recovery for connect and sync; orphan key cleanup; docs and regression coverage. Post-cleaner ./forge verify passed Ruff, format, strict mypy, lock/pip checks, 279 tests and 90% coverage. Independent code review APPROVE with zero findings and architect CLEAR.",
+      "startedAt": "2026-09-06T05:13:42.550Z",
+      "completedAt": "2026-09-06T05:36:07.276Z"
     }
   ],
   "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."

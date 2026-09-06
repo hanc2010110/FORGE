@@ -146,6 +146,7 @@
             <a href="#guided-workflow">Projects</a>
             <a href="#guided-workflow">Recent sessions</a>
             <a href="#advanced-console">History</a>
+            <button id="open-settings-button" type="button">⚙ Settings</button>
           </nav>
           <section class="predeploy-readiness" aria-labelledby="predeploy-title">
             <h2 id="predeploy-title">Pre-deploy essentials</h2>
@@ -156,6 +157,10 @@
               <li><span class="ready-dot complete"></span> Local cited RAG</li>
               <li><span class="ready-dot complete"></span> STL parser + 3D context</li>
               <li><span class="ready-dot complete"></span> Health + backup/restore</li>
+              <li>
+                <span id="github-readiness-dot" class="ready-dot partial"></span>
+                <span id="github-readiness-label">GitHub App not connected</span>
+              </li>
               <li><span class="ready-dot blocked"></span> Live CAD/CAE/device connectors</li>
             </ul>
           </section>
@@ -1636,6 +1641,102 @@
           </div>
         </aside>
       </div>
+      <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+        <section class="settings-shell">
+          <header class="settings-header">
+            <div>
+              <p class="section-index">FORGE SETTINGS</p>
+              <h2 id="settings-title">Integrations</h2>
+              <p>GitHub의 변경과 CI 결과를 읽기 전용 증거로 연결합니다.</p>
+            </div>
+            <button id="close-settings-button" class="settings-close" type="button" aria-label="Close settings">×</button>
+          </header>
+          <div class="settings-body">
+            <nav class="settings-nav" aria-label="Settings sections">
+              <button type="button" class="active">All integrations</button>
+              <p>Source control</p>
+              <p>CAD · PLM</p>
+              <p>CAE · Simulation</p>
+              <p>CI · Test</p>
+              <p>BOM · Supply</p>
+              <p>AI · RAG</p>
+              <p>Robot · Lab</p>
+            </nav>
+            <section class="integration-panel" aria-labelledby="github-settings-title">
+              <div class="integration-title-row">
+                <div>
+                  <p class="section-index">READ-ONLY CONNECTOR</p>
+                  <h3 id="github-settings-title">GitHub App</h3>
+                </div>
+                <span id="github-connection-badge" class="connection-badge">Not connected</span>
+              </div>
+              <p class="settings-copy">
+                FORGE는 repository metadata, commit 변경 파일, open pull request, GitHub Actions 결과만 읽습니다. 토큰은 메모리에서만 사용하고 저장하지 않습니다.
+              </p>
+              <section class="integration-catalog-section" aria-labelledby="integration-catalog-title">
+                <div class="integration-title-row">
+                  <div>
+                    <p class="section-index">CONNECTION ENVIRONMENT</p>
+                    <h3 id="integration-catalog-title">Engineering API catalog</h3>
+                  </div>
+                  <span id="integration-catalog-count" class="connection-badge">Loading</span>
+                </div>
+                <p>모든 연결은 읽기 전용 드라이버, 최소 권한, source/time/hash 증거 계약을 사용합니다. 아직 드라이버가 없는 항목은 Adapter required로 표시됩니다.</p>
+                <div id="integration-catalog" class="integration-catalog"></div>
+              </section>
+              <form id="github-settings-form" class="github-settings-form" novalidate>
+                <div class="settings-grid">
+                  <label>
+                    <span>App ID</span>
+                    <input id="github-app-id" inputmode="numeric" pattern="[1-9][0-9]*" placeholder="예: 123456" required>
+                  </label>
+                  <label>
+                    <span>Installation ID</span>
+                    <input id="github-installation-id" inputmode="numeric" pattern="[1-9][0-9]*" placeholder="예: 98765432" required>
+                  </label>
+                  <label>
+                    <span>Repository owner</span>
+                    <input id="github-owner" value="hanc2010110" maxlength="100" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}" required>
+                  </label>
+                  <label>
+                    <span>Repository name</span>
+                    <input id="github-repository" value="FORGE" maxlength="100" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}" required>
+                  </label>
+                </div>
+                <label class="key-picker">
+                  <span>Private key (.pem)</span>
+                  <input id="github-private-key" type="file" accept=".pem,application/x-pem-file" required>
+                  <small id="github-key-help">Finder에서 다운로드한 .pem 파일을 선택하세요. 키 내용은 화면·DB·로그에 표시되지 않습니다.</small>
+                </label>
+                <div id="github-settings-status" class="settings-status" role="status" aria-live="polite">
+                  <strong>연결 정보 대기</strong>
+                  <span>필수 값을 입력하고 먼저 ‘연결 시험’을 누르세요.</span>
+                </div>
+                <div class="settings-actions">
+                  <button id="github-test-button" class="secondary-button" type="button">연결 시험</button>
+                  <button id="github-connect-button" type="submit">안전하게 저장 및 연결</button>
+                  <button id="github-sync-button" class="secondary-button" type="button" disabled>지금 증거 동기화</button>
+                </div>
+              </form>
+              <section id="github-evidence-summary" class="github-evidence-summary" aria-labelledby="github-evidence-title" hidden>
+                <div class="integration-title-row">
+                  <h3 id="github-evidence-title">Latest source-bound evidence</h3>
+                  <span id="github-actions-state" class="connection-badge">UNKNOWN</span>
+                </div>
+                <dl id="github-evidence-facts" class="github-evidence-facts"></dl>
+                <div>
+                  <strong>Changed files</strong>
+                  <div id="github-changed-files" class="github-file-list"></div>
+                </div>
+              </section>
+              <aside class="settings-security-note">
+                <strong>저장 위치와 권한</strong>
+                <p>키는 Git 추적에서 제외된 <code>.forge-local/github/keys</code>에 0600 권한으로 저장됩니다. GitHub App은 Contents, Pull requests, Actions를 Read-only로 유지하세요.</p>
+              </aside>
+            </section>
+          </div>
+        </section>
+      </dialog>
       <noscript>
         <section class="load-status error">
           <strong>

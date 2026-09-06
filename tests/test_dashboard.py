@@ -88,9 +88,9 @@ class DashboardAssetTests(unittest.TestCase):
                     int(response.headers["Content-Length"]), len(response.body)
                 )
                 total_bytes += len(response.body)
-        # Keep the dependency-free dashboard small enough to load instantly while
-        # allowing the cited local-RAG interaction to remain self-contained.
-        self.assertLess(total_bytes, 300_000)
+        # Keep the dependency-free dashboard bounded while allowing the cited RAG,
+        # 3D context and typed Integration Hub to remain self-contained.
+        self.assertLess(total_bytes, 325_000)
 
     def test_html_references_only_public_same_origin_assets(self) -> None:
         asset = load_dashboard_asset("/app/")
@@ -119,6 +119,12 @@ class DashboardAssetTests(unittest.TestCase):
         self.assertIn("Pre-deploy essentials", html)
         self.assertIn("Static chat UX", html)
         self.assertIn("Live CAD/CAE/device connectors", html)
+        self.assertIn('id="open-settings-button"', html)
+        self.assertIn('id="settings-dialog"', html)
+        self.assertIn('id="integration-catalog"', html)
+        self.assertIn('id="github-settings-form"', html)
+        self.assertIn('id="github-private-key"', html)
+        self.assertIn("GitHub App", html)
         self.assertIn('id="project-explorer"', html)
         self.assertIn('class="engineering-view"', html)
         self.assertIn('id="workflow-guide"', html)
@@ -236,6 +242,13 @@ class DashboardAssetTests(unittest.TestCase):
             self.assertIn(tier, script)
         self.assertIn("textContent", script)
         self.assertIn("replaceChildren", script)
+        self.assertIn("/api/v1/integrations/github/test", script)
+        self.assertIn("/api/v1/integrations/github/sync", script)
+        self.assertIn("latest_evidence_state", script)
+        self.assertIn("latest_evidence_age_seconds", script)
+        self.assertIn('["Changed files", evidence.total_changed_files]', script)
+        self.assertIn("loadIntegrationCatalog", script)
+        self.assertIn("file.text()", script)
         self.assertIn('credentials: "same-origin"', script)
         self.assertIn("/api/v1/projects/${project}/release-decisions/", script)
         self.assertNotIn("encodeURIComponent(project)", script)

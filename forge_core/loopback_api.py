@@ -22,6 +22,12 @@ from forge_core.dashboard import (
     is_dashboard_target,
     load_dashboard_asset,
 )
+from forge_core.github_integration import (
+    GitHubConnectCommand,
+    GitHubIntegrationError,
+    GitHubIntegrationPort,
+)
+from forge_core.integration_hub import IntegrationHub
 from forge_core.persistence import (
     CorruptRecordError,
     IdempotencyConflictError,
@@ -184,6 +190,9 @@ _DECISION_ITEM_ROUTE = re.compile(
     rf"^/api/v1/projects/(?P<project>{_SAFE_SEGMENT})/release-decisions/"
     r"(?P<item>sha256:[0-9a-f]{64})$"
 )
+_GITHUB_INTEGRATION_ROUTE = "/api/v1/integrations/github"
+_GITHUB_TEST_ROUTE = "/api/v1/integrations/github/test"
+_GITHUB_SYNC_ROUTE = "/api/v1/integrations/github/sync"
 
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -248,6 +257,8 @@ class LoopbackAPI:
         local_installation_id: str,
         nonce_factory: Callable[[], str] = lambda: secrets.token_hex(32),
         max_request_bytes: int = MAX_REQUEST_BYTES,
+        github_integration: GitHubIntegrationPort | None = None,
+        integration_hub: IntegrationHub | None = None,
     ) -> None:
         if not csrf_secret:
             raise ValueError("CSRF secret cannot be empty")
@@ -265,6 +276,8 @@ class LoopbackAPI:
         self._local_installation_id = local_installation_id
         self._nonce_factory = nonce_factory
         self.max_request_bytes = max_request_bytes
+        self._github_integration = github_integration
+        self._integration_hub = integration_hub
 
     def _token(self) -> str:
         nonce = self._nonce_factory()
@@ -422,6 +435,16 @@ class LoopbackAPI:
             actor_id=self._identity(headers)[1],
         )
 
+    def _integration_idempotency_key(self, headers: Sequence[tuple[str, str]]) -> str:
+        value = self._one_header(headers, "Idempotency-Key", required=True)
+        if value is None or re.fullmatch(_SAFE_SEGMENT, value) is None:
+            raise APIError(
+                400,
+                "invalid_idempotency_key",
+                "Idempotency-Key must be an opaque identifier.",
+            )
+        return value
+
     def _identity(self, headers: Sequence[tuple[str, str]]) -> tuple[str, str]:
         org_id = self._one_header(headers, "X-FORGE-ORG-ID") or LOCAL_ORG_ID
         actor_id = self._one_header(headers, "X-FORGE-ACTOR-ID") or LOCAL_ACTOR_ID
@@ -444,6 +467,13 @@ class LoopbackAPI:
 
     @staticmethod
     def _route_match(target: str) -> tuple[str, re.Match[str] | None]:
+        github_routes = {
+            _GITHUB_INTEGRATION_ROUTE: "github_integration",
+            _GITHUB_TEST_ROUTE: "github_test",
+            _GITHUB_SYNC_ROUTE: "github_sync",
+        }
+        if target in github_routes:
+            return github_routes[target], None
         if target == "/api/v1/projects":
             return "project_collection", None
         routes = (
@@ -530,9 +560,69 @@ class LoopbackAPI:
             )
         if method == "GET" and target == "/api/v1/connectors":
             return 200, {"data": self._service.list_connectors()}, {}
+        if method == "GET" and target == "/api/v1/integrations":
+            if self._integration_hub is None:
+                return 200, {"data": []}, {}
+            return 200, {"data": self._integration_hub.catalog()}, {}
         route, match = self._route_match(target)
         if route == "unknown":
             raise APIError(404, "not_found", "Resource was not found.")
+        if route.startswith("github_"):
+            if self._github_integration is None:
+                raise APIError(
+                    503,
+                    "integration_unavailable",
+                    "GitHub integration is unavailable in this server mode.",
+                )
+            if method == "GET" and route == "github_integration":
+                return 200, {"data": self._github_integration.status()}, {}
+            if method != "POST":
+                raise APIError(
+                    405,
+                    "method_not_allowed",
+                    "Method is not allowed.",
+                    headers={"Allow": "GET, POST"},
+                )
+            self._validate_csrf(headers)
+            payload = self._parse_json(headers, body)
+            if route == "github_test":
+                github_command = GitHubConnectCommand.model_validate(payload)
+                github_data = self._github_integration.test_connection(github_command)
+                return 200, {"data": github_data}, {}
+            if route == "github_integration":
+                github_command = GitHubConnectCommand.model_validate(payload)
+                idempotency_key = self._integration_idempotency_key(headers)
+                github_result = self._github_integration.connect(
+                    github_command, idempotency_key=idempotency_key
+                )
+                return (
+                    201,
+                    {"data": github_result.data},
+                    {
+                        "Idempotency-Replayed": (
+                            "true" if github_result.replayed else "false"
+                        )
+                    },
+                )
+            if payload:
+                raise APIError(
+                    400,
+                    "invalid_payload",
+                    "GitHub sync request body must be an empty object.",
+                )
+            idempotency_key = self._integration_idempotency_key(headers)
+            github_result = self._github_integration.sync(
+                idempotency_key=idempotency_key
+            )
+            return (
+                201,
+                {"data": github_result.data},
+                {
+                    "Idempotency-Replayed": (
+                        "true" if github_result.replayed else "false"
+                    )
+                },
+            )
         if route == "project_collection":
             if method != "POST":
                 raise APIError(
@@ -867,6 +957,10 @@ class LoopbackAPI:
                 "permission_denied",
                 "Identity is not allowed to perform this operation.",
             )
+        except GitHubIntegrationError as exc:
+            status = exc.status
+            extra_headers = {}
+            response_body = _error_bytes(exc.code, exc.public_message)
         except ValidationError as exc:
             status = 422
             extra_headers = {}
@@ -988,6 +1082,8 @@ def create_loopback_server(
     port: int = 0,
     csrf_secret: bytes | None = None,
     local_installation_id: str = "local-installation",
+    github_integration: GitHubIntegrationPort | None = None,
+    integration_hub: IntegrationHub | None = None,
 ) -> ForgeLoopbackHTTPServer:
     if host != "127.0.0.1":
         raise ValueError("FORGE API may bind only to 127.0.0.1")
@@ -1005,6 +1101,8 @@ def create_loopback_server(
                 secrets.token_bytes(32) if csrf_secret is None else csrf_secret
             ),
             local_installation_id=local_installation_id,
+            github_integration=github_integration,
+            integration_hub=integration_hub,
         )
     except Exception:
         server.server_close()

@@ -4,6 +4,7 @@
 !.env.example
 *.pem
 *.key
+.forge-local/
 
 # JavaScript / TypeScript
 node_modules/
@@ -22,6 +23,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+build/
 *.egg-info/
 
 # Local project data and generated engineering artifacts
