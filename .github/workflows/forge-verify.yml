@@ -17,6 +17,11 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      FORGE_PYTHON: python
+      FORGE_RUFF: ruff
+      FORGE_MYPY: mypy
+      FORGE_COVERAGE: coverage
     steps:
       - name: Check out exact commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
