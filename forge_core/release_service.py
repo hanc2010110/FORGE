@@ -2435,6 +2435,18 @@ class ReleaseIntegrationService:
         value = self._store.get_release_evidence(project_id, evidence_id)
         return value.model_dump(mode="json")
 
+    def list_release_evidence(self, project_id: str) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in self._store.list_release_evidence(project_id)
+        ]
+
+    def list_release_decisions(self, project_id: str) -> list[dict[str, Any]]:
+        return [
+            item.model_dump(mode="json")
+            for item in self._store.list_release_decisions(project_id)
+        ]
+
     def get_release_decision(
         self, project_id: str, decision_hash: str
     ) -> dict[str, Any]:

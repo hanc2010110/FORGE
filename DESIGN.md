@@ -3,15 +3,16 @@
 ## Source of truth
 
 - **Status:** Active
-- **Last refreshed:** 2026-09-03
-- **Primary product surfaces:** Chat Home, Engineering Session, contextual
-  Engineering Workspace, advanced evidence console.
+- **Last refreshed:** 2026-09-09
+- **Primary product surfaces:** ChatGPT/Codex-compatible LLM host conversation,
+  contextual Engineering Workspace, secondary operator/evidence console.
 - **Evidence reviewed:** `PRD.md`, `README.md`, the current dependency-free web
-  implementation under `forge_core/web/`, browser QA from G017, and the supplied
-  “FORGE 최종 UX 구조 설계 보고서” dated 2026-09-03.
+  implementation under `forge_core/web/`, browser QA from G017, the supplied
+  “FORGE 최종 UX 구조 설계 보고서” dated 2026-09-03, and the 2026-09-09
+  GPT-like simplification review of the live loopback UI and Integration Hub.
 
 This file is the UI/UX decision contract. When old dashboard markup or copy
-conflicts with this document, the chat-first contract here wins.
+conflicts with this document, the LLM-hosted agent contract here wins.
 
 ## Brand
 
@@ -25,8 +26,8 @@ conflicts with this document, the chat-first contract here wins.
 
 ## Product goals
 
-- Let a user start with one message and progressively attach the context FORGE
-  actually needs.
+- Let a user start in their LLM host with one message and progressively attach the
+  context FORGE actually needs.
 - Keep the design loop conversational while rendering proposals, simulations,
   evidence and release decisions as inspectable engineering objects.
 - Make confirmation, acceptance, formal verification and release four visibly
@@ -60,10 +61,10 @@ status review. Keyboard use and dense identifiers are first-class requirements.
 
 ## Product Experience
 
-FORGE is a conversational engineering collaboration environment for robotics and
-embedded teams. An engineer connects a project, CAD/design asset, or read-only
-machine context, explains the desired change in ordinary language, and works with
-FORGE to compare, confirm, simulate, revise, verify, and release that change.
+FORGE is an independent engineering agent for robotics and embedded teams. The LLM
+host owns natural conversation. FORGE owns typed engineering objects, provenance,
+candidate freezing, evidence binding, deterministic checks, audit, and the final
+release-policy calculation.
 
 FORGE is the validation layer connecting CAD, PLM, Git, CI, simulation, bench, HIL,
 and physical-device systems. It does not replace or silently write to those systems.
@@ -90,20 +91,26 @@ but it must not force the user through disconnected screens.
 - A passed simulation is not presented as verified, measured, safe, or releasable.
 - READY or BLOCKED uses imported source-bound evidence and policy, never chat text.
 
-## Primary Workspace
+## Primary Host Experience
 
-The default surface is a GPT-like chat shell:
+The default surface is ChatGPT, Codex, or another approved LLM host:
 
-- **Left sidebar:** New chat, Projects, Recent sessions, History, and the current
-  organization/actor boundary.
-- **Center:** the conversation timeline with a sticky composer. Home begins with
-  “What do you want to build or change?” and does not require a setup wizard.
-- **Context tray:** the composer `+` action progressively adds CAD, project,
+- **Conversation:** the host supplies message history, composer, attachments and
+  familiar navigation. FORGE must not rebuild these as its primary product shell.
+- **Context:** the host attachment action progressively adds CAD, project,
   engineering files, BOM, datasheets, test results, requirements or a future
   read-only machine connection.
-- **Engineering Workspace:** hidden by default. It opens only when a user chooses
+- **FORGE objects:** recommendations, alternatives, approval summaries, simulation
+  results and release decisions render as tool-backed objects in the conversation.
+- **Engineering Workspace:** an optional host component or linked view opens when
+  a user chooses
   `Open 3D`, `View Simulation`, `Compare Revisions`, an evidence source, or an
   equivalent contextual action.
+
+The local `/app/` surface is a secondary operator/evidence console. It owns
+connection setup, source provenance, audit history, exact hashes and failure
+diagnostics. It may retain a compact GPT-like visual language for consistency, but
+it must not present static scripted conversation as if it were the production LLM.
 
 When the Engineering Workspace is open, desktop becomes two panes:
 
@@ -122,9 +129,13 @@ conversation remains the interaction surface; engineering objects are structured
 cards rather than long prose. On tablet and mobile the workspace is an in-flow
 panel or full-screen sheet after the conversation trigger. Tables scroll locally.
 
-The legacy project explorer, top stage tracker, and detached AI side rail are not
-part of the default guided experience. The advanced evidence console may remain
-available below the guided session for exact API and provenance inspection.
+The legacy project explorer, top stage tracker, detached AI side rail and scripted
+demo conversation are not primary product surfaces. The evidence console remains
+available for exact API, connector and provenance inspection.
+
+Operational readiness matrices and unavailable-provider catalogs are not welcome
+content. The sidebar shows only a compact connection summary, while Settings owns
+credential entry, synchronization, and the expandable full provider catalog.
 
 ## Information architecture
 
@@ -284,13 +295,16 @@ release authority.
 
 ## Visual language
 
-- Dark graphite engineering canvas with neutral surfaces.
+- Quiet GPT-like dark neutral canvas: one continuous conversation surface, a
+  slightly darker navigation rail, and restrained dividers instead of nested
+  dashboard containers.
 - Teal for active context and selected proposals; amber for unknown, inferred, or
   missing information; red for failed requirements; green only for evidence-backed
   pass or readiness.
-- Compact sans-serif UI with monospace identifiers, hashes, measurements, and
-  states.
-- One-pixel borders, restrained radius/elevation, no decorative imagery.
+- System sans-serif UI with monospace reserved for identifiers, hashes,
+  measurements, and states.
+- One-pixel dividers, generous conversation whitespace, restrained radius and
+  elevation, no decorative imagery.
 - Dense but readable tables and cards; no nested cards without a distinct
   engineering object boundary.
 - Minimum 44 px touch controls, visible focus, text paired with status color, and
@@ -300,6 +314,10 @@ release authority.
 
 - **Chat shell:** collapsible navigation rail, chronological conversation, context
   chips, and a sticky multiline composer with an explicit attachment menu.
+- **Welcome state:** centered FORGE mark, one plain-language prompt, three compact
+  example intents, and the composer. No readiness dashboard or product-tour card.
+- **Integration settings:** connected provider and synchronization controls first;
+  full future-provider catalog is collapsed by default and filterable by domain.
 - **Engineering message:** assistant summary plus a typed object card. Long-form
   analysis is collapsed behind `Why` or `Evidence`.
 - **Recommendation card:** recommendation, rationale, evidence references,
@@ -408,10 +426,11 @@ integrations:
    connect/sync mutations use a prepared/completed recovery journal, and exact-SHA
    Actions collection fails closed at GitHub's 1,000-result filtered-search cap.
 
-STEP/SolidWorks parsing, CAE execution, robot/bench/HIL transport, production
-Git/PLM/CI/BOM credentials, SSO and a hosted LLM remain outside the dependency-free
-local pilot until their provenance, authorization, timeout, retry, redaction and
-failure contracts are implemented and tested.
+STEP metadata parsing, hosted AI/embedding transport contracts, semantic retrieval,
+GitLab/Jenkins/Onshape/SimScale read-only clients, localhost HTTP MCP and approved
+simulation/bench/HIL/device evidence-runner contracts are now part of the local
+pilot. SolidWorks native editing, enterprise PLM kernels, vendor CAE solvers, BOM
+price suppliers, SSO and hosted multitenant operations remain outside this round.
 
 ### Local-pilot composition boundary
 
@@ -497,10 +516,10 @@ Implemented now:
 
 Not yet production-connected:
 
-- hosted LLM, embedding and semantic retrieval provider connections;
-- STEP/SolidWorks assembly parsing and CAD editing;
-- live CAE/thermal/dynamics solver execution;
+- production hosted LLM/embedding credential storage and enterprise data controls;
+- SolidWorks native assembly parsing and CAD editing;
+- vendor CAE/thermal/dynamics solver execution beyond the allowlisted evidence-runner contract;
 - identity-provider login and self-service organization administration;
-- live robot/machine telemetry and physical test orchestration;
+- live robot/machine control beyond tier-bound evidence import and allowlisted edge runs;
 - connector-mediated source writeback.
 - hosted deployment monitoring, secret management and multitenancy controls.

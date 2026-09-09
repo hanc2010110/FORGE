@@ -14,6 +14,8 @@ from forge_core.models import ContractModel
 
 MAX_STL_BYTES = 1_000_000
 MAX_STL_TRIANGLES = 20_000
+MAX_STEP_BYTES = 2_000_000
+MAX_STEP_POINTS = 50_000
 _ZERO_HASH = "sha256:" + "0" * 64
 _FLOAT = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _FACET_RE = re.compile(
@@ -22,6 +24,13 @@ _FACET_RE = re.compile(
 )
 _VERTEX_RE = re.compile(
     rf"^vertex\s+({_FLOAT})\s+({_FLOAT})\s+({_FLOAT})$",
+    re.IGNORECASE,
+)
+_STEP_PRODUCT_RE = re.compile(r"PRODUCT\('([^']*)'", re.IGNORECASE)
+_STEP_SCHEMA_RE = re.compile(r"FILE_SCHEMA\s*\(\s*\(\s*'([^']+)'", re.IGNORECASE)
+_STEP_POINT_RE = re.compile(
+    rf"CARTESIAN_POINT\s*\(\s*'[^']*'\s*,\s*\(\s*({_FLOAT})\s*,\s*"
+    rf"({_FLOAT})\s*,\s*({_FLOAT})\s*\)\s*\)",
     re.IGNORECASE,
 )
 
@@ -151,6 +160,44 @@ class StoredCADGeometryAsset(ContractModel):
         return self
 
 
+class STEPGeometrySummary(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    asset_id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+    project_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    source_uri: str = Field(min_length=1)
+    source_version: str = Field(min_length=1)
+    captured_at: datetime
+    content_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    geometry_format: Literal["step"] = "step"
+    schema_names: tuple[str, ...] = Field(min_length=1, max_length=8)
+    product_names: tuple[str, ...] = ()
+    length_unit: str = Field(min_length=1)
+    point_count: int = Field(ge=0, le=MAX_STEP_POINTS)
+    bounds: STLBounds | None = None
+    summary_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("captured_at")
+    @classmethod
+    def captured_at_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "captured_at")
+
+    @field_validator("schema_names", "product_names")
+    @classmethod
+    def names_must_be_ordered(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value))):
+            raise ValueError("STEP summary names must be unique and ordered")
+        return value
+
+    @model_validator(mode="after")
+    def summary_hash_must_match_payload(self) -> STEPGeometrySummary:
+        if self.summary_hash != step_summary_hash(
+            self.model_copy(update={"summary_hash": _ZERO_HASH})
+        ):
+            raise ValueError("STEP summary hash does not match payload")
+        return self
+
+
 def bytes_sha256(payload: bytes) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
@@ -173,6 +220,71 @@ def cad_geometry_hash(asset: CADGeometryAsset) -> str:
 
 def stl_asset_hash(asset: CADGeometryAsset) -> str:
     return canonical_sha256(asset.model_copy(update={"asset_hash": _ZERO_HASH}))
+
+
+def step_summary_hash(summary: STEPGeometrySummary) -> str:
+    return canonical_sha256(summary.model_copy(update={"summary_hash": _ZERO_HASH}))
+
+
+def parse_step_summary(
+    *,
+    asset_id: str,
+    project_id: str,
+    tenant_id: str,
+    source_uri: str,
+    source_version: str,
+    captured_at: datetime,
+    content: bytes,
+    max_bytes: int = MAX_STEP_BYTES,
+    max_points: int = MAX_STEP_POINTS,
+) -> STEPGeometrySummary:
+    if not content:
+        raise ValueError("STEP payload is empty")
+    if max_bytes < 1 or max_bytes > MAX_STEP_BYTES:
+        raise ValueError("STEP byte bound is outside the supported range")
+    if len(content) > max_bytes:
+        raise ValueError("STEP payload exceeds byte bound")
+    if max_points < 0 or max_points > MAX_STEP_POINTS:
+        raise ValueError("STEP point bound is outside the supported range")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("STEP payload must be UTF-8 text") from exc
+    if "ISO-10303-21" not in text[:128] or "END-ISO-10303-21" not in text[-256:]:
+        raise ValueError("STEP payload is missing ISO-10303-21 envelope")
+    schema_names = tuple(sorted(set(_STEP_SCHEMA_RE.findall(text))))
+    if not schema_names:
+        raise ValueError("STEP payload is missing FILE_SCHEMA")
+    product_names = tuple(
+        sorted(name for name in set(_STEP_PRODUCT_RE.findall(text)) if name)
+    )
+    points = tuple(
+        _vertex_from_strings((match.group(1), match.group(2), match.group(3)))
+        for match in _STEP_POINT_RE.finditer(text)
+    )
+    if len(points) > max_points:
+        raise ValueError("STEP payload exceeds point bound")
+    bounds = _bounds_for_vertices(points) if points else None
+    draft = STEPGeometrySummary.model_construct(
+        schema_version="1.0.0",
+        asset_id=asset_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        source_uri=source_uri,
+        source_version=source_version,
+        captured_at=captured_at,
+        content_sha256=bytes_sha256(content),
+        geometry_format="step",
+        schema_names=schema_names,
+        product_names=product_names,
+        length_unit=_step_length_unit(text),
+        point_count=len(points),
+        bounds=bounds,
+        summary_hash=_ZERO_HASH,
+    )
+    return STEPGeometrySummary.model_validate(
+        draft.model_copy(update={"summary_hash": step_summary_hash(draft)}).model_dump()
+    )
 
 
 def parse_stl_asset(
@@ -360,6 +472,10 @@ def _calculate_bounds(triangles: tuple[STLTriangle, ...]) -> STLBounds:
     vertices = [vertex for triangle in triangles for vertex in triangle.vertices]
     if not vertices:
         raise ValueError("STL geometry has no vertices")
+    return _bounds_for_vertices(tuple(vertices))
+
+
+def _bounds_for_vertices(vertices: tuple[STLVertex, ...]) -> STLBounds:
     return STLBounds(
         minimum=STLVertex(
             x=min(vertex.x for vertex in vertices),
@@ -372,3 +488,14 @@ def _calculate_bounds(triangles: tuple[STLTriangle, ...]) -> STLBounds:
             z=max(vertex.z for vertex in vertices),
         ),
     )
+
+
+def _step_length_unit(text: str) -> str:
+    folded = text.casefold()
+    if ".milli." in folded and ".metre." in folded:
+        return "millimetre"
+    if ".metre." in folded:
+        return "metre"
+    if ".inch." in folded:
+        return "inch"
+    return "unspecified"

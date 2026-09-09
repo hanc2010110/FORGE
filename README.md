@@ -1,21 +1,20 @@
 # Project FORGE
 
-FORGE는 로봇·임베디드 팀을 위한 **AI Engineering Change & Resolution Platform**입니다. 하드웨어 변경 의도를 source-bound plan으로 만들고, 실제 firmware, BOM, protocol, test, documentation 변경과 증거를 검증해 출시 준비 상태를 판정합니다.
+FORGE는 로봇·임베디드 팀을 위한 **독립형 Engineering Reasoning Agent**입니다. ChatGPT, Codex 또는 다른 LLM host 안에서 엔지니어처럼 대화하되, 하드웨어 변경 의도를 source-bound plan으로 만들고 실제 firmware, BOM, protocol, test, documentation 변경과 증거를 검증해 출시 준비 상태를 판정하는 backend는 독립적으로 유지합니다.
 
-사용자에게 보이는 흐름은 `CONNECT/IMPORT -> PLAN -> VERIFY -> RELEASE`입니다.
+사용자에게 보이는 흐름은 `ATTACH -> TALK -> PLAN -> CONFIRM -> SIMULATE/TEST -> REVISE -> VERIFY -> RELEASE`입니다.
 
 1. **CONNECT/IMPORT** — 만들어진 기계·로봇, CAD model, 설계도, PLM snapshot 또는 manual snapshot을 읽기 전용 기준으로 묶습니다.
 2. **PLAN** — 변경하려는 부품, 설계 의도 또는 운용 시나리오를 입력하고 예상 영향, 대안, 필요한 수정과 재시험을 정리합니다.
 3. **VERIFY** — 실제 snapshot과 imported evidence를 계획과 비교해 예상된 변경, 누락된 변경, 예상 밖 변경을 구분합니다.
 4. **RELEASE** — 실제 evidence와 policy만 사용해 `READY` 또는 `BLOCKED` 판정과 감사 가능한 readiness breakdown을 생성합니다.
 
-내부 제품 루프는 `PLAN <-> DESIGN -> VERIFY -> DIAGNOSE -> FIX -> RE-VERIFY -> RELEASE`입니다. 현재 구현은 배포 시험용 로컬 pilot입니다. deterministic evidence kernel, 실제 ASCII/binary STL 형상 파싱, project-scoped cited RAG, RBAC 감사 경계, 운영 백업·복구와 read-only GitHub App 연결까지 이어집니다. Hosted LLM, STEP/SolidWorks, CAE와 GitHub 이외 외부 시스템 live connector는 아직 production 기능으로 약속하지 않습니다.
+내부 제품 루프는 `PLAN <-> DESIGN -> VERIFY -> DIAGNOSE -> FIX -> RE-VERIFY -> RELEASE`입니다. 현재 구현은 배포 시험용 로컬 pilot입니다. deterministic evidence kernel, 실제 ASCII/binary STL 형상 파싱과 STEP metadata summary, project-scoped lexical/semantic cited RAG, RBAC 감사 경계, 운영 백업·복구, read-only GitHub App 연결, GitLab/Jenkins/Onshape/SimScale credential-ready client, simulation/bench/HIL/device evidence runner 계약까지 이어집니다. SolidWorks native CAD editing, BOM live 가격 공급처, 로그인/멀티테넌시 운영은 아직 production 기능으로 약속하지 않습니다.
 
-`/app/`은 GPT처럼 대화에서 바로 시작하는 Engineering Session입니다. 첫 진입은
-`What do you want to build or change?`에서 시작하고 CAD, 프로젝트, BOM, 데이터시트,
-시험 결과 같은 source-bound context는 대화 중 점진적으로 추가합니다. 3D, simulation,
-revision comparison 또는 evidence를 자세히 볼 때만 Engineering Workspace가 같은 대화
-옆에 열립니다.
+기본 대화 UX는 LLM host가 담당합니다. `./forge agent`는 host가 사용할 MCP tool server를
+실행하고, `/app/`은 연결 상태, source evidence, candidate, simulation, audit와 release
+decision을 확인하는 보조 operator console입니다. 자체 웹 화면은 ChatGPT를 복제하는
+독립 채팅 제품으로 확장하지 않습니다.
 
 ## 신뢰 경계
 
@@ -39,20 +38,33 @@ revision comparison 또는 evidence를 자세히 볼 때만 Engineering Workspac
 - confirmed design candidates, exact simulation bindings, evidence claims, append-only conversation state transitions를 저장하는 SQLite v7/API ledger
 - release evidence ingest와 deterministic `READY`/`BLOCKED` decision
 - loopback-only API with Host, Origin, CSRF, body-limit, idempotency and optimistic concurrency checks
-- `/app/` chat-first static Engineering Session with progressive context, structured
-  engineering cards, explicit confirmation gates and a contextual Engineering
+- `/app/` secondary operator/evidence console with a compact local workflow preview,
+  structured engineering cards, exact provenance and a contextual Engineering
   Workspace
+- host-neutral MCP agent gateway with typed read tools, approval-required mutation
+  tools, idempotent backend writes, and explicit evidence/release authority metadata
+- repository-local Codex plugin that turns the LLM into the conversation surface
+  while preserving FORGE as the independent engineering backend
 - ASCII/binary STL 파일의 bounded parsing, 형상·bounds·content/geometry hash 저장,
   프로젝트 export와 drag-to-rotate dependency-free 3D canvas
+- STEP 파일의 bounded metadata parsing, schema/product/unit/point-bounds 추출과
+  source/hash-bound summary
 - project-scoped text ingestion, deterministic retrieval, cited local answer와
   immutable conversation runtime ledger. 이 로컬 provider는 release 판정 권한이 없음
+- hosted AI Responses/Embeddings provider를 꽂을 수 있는 HTTPS transport 계약과
+  semantic RAG index. secret은 transport/log repr에서 마스킹되고 release 권한은 없음
 - organization/actor/membership/project-access RBAC를 모든 project API에 강제하고
   허용·거부 결과를 append-only audit event로 저장
 - deep SQLite health/readiness, SHA-256 verified backup과 기존 파일을 덮어쓰지 않는
   restore verification
-- GPT형 Settings 안의 Integration Hub: Git, CAD/PLM, CAE, CI, BOM 공급처,
-  AI/RAG, robot/bench/HIL 연결을 동일한 read-only driver 계약으로 추가할 수 있는
+- operator Settings의 Integration Hub: Git, CAD/PLM, CAE, CI, BOM 공급처,
+  LLM host/MCP, robot/bench/HIL 연결을 동일한 read-only driver 계약으로 추가할 수 있는
   typed catalog와 상태 API
+- GitLab pipeline, Jenkins build, Onshape document, SimScale run을 읽기 전용으로 붙일
+  수 있는 credential-ready client 계약
+- approved allowlist command만 실행 가능한 local evidence runner. simulation, bench,
+  HIL, physical-device tier를 분리하고 stdout/stderr/result hash를 남김
+- `./forge agent-http`의 localhost Streamable-HTTP-shaped MCP 개발 endpoint
 - GitHub App ID, Installation ID와 `.pem` 파일 선택을 통한 실제 연결 시험,
   저장소 metadata·최신 commit 변경 파일·open PR·exact-commit Actions 수집
 - GitHub App token은 메모리에서만 사용하고, private key는 Git 추적에서 제외된
@@ -62,15 +74,16 @@ revision comparison 또는 evidence를 자세히 볼 때만 Engineering Workspac
 
 ## 배포 시험 기준 완성도
 
-현재 로컬 pilot 범위의 가중 완성도는 약 **82%**입니다. 이는 테스트 coverage와 다른
-제품 범위 지표입니다: 검증·릴리스 kernel 90%, chat-first workflow 90%, 권한·감사·근거
-RAG 85%, 로컬 운영 기반 82%, 외부 live ecosystem 45%를 pilot 우선순위로 가중했습니다.
+현재 로컬 pilot 범위의 가중 완성도는 약 **88%**입니다. 전체 상용 제품 기준으로는
+BOM 가격 공급처와 로그인/멀티테넌시를 이번 범위에서 제외했을 때 약 **80%** 수준입니다.
+이는 테스트 coverage와 다른 제품 범위 지표입니다: 검증·릴리스 kernel 90%, LLM
+agent/tool workflow 88%, 권한·감사·근거 RAG 88%, 로컬 운영 기반 84%, 외부 live
+ecosystem 60%를 pilot 우선순위로 가중했습니다.
 
-남은 production 범위는 hosted LLM/embedding, STEP·SolidWorks assembly metadata,
-실제 CAE/동역학 실행, GitLab·PLM·별도 CI·BOM 공급처·장치용 실제 driver, SSO/managed
-secret vault, hosted monitoring과 멀티테넌시입니다. 이 공급자들은 Integration Hub에
-`Adapter required`로 정직하게 표시되며 실제 자격증명을 받기 전에는 연결 상태가 되지
-않습니다.
+남은 production 범위는 SolidWorks native 편집/assembly kernel, Autodesk·Teamcenter·
+Windchill·Aras 같은 enterprise PLM driver, Ansys/MATLAB 같은 vendor solver driver,
+BOM 공급처 live 가격, SSO/managed secret vault, hosted monitoring과 멀티테넌시입니다.
+자격증명이 필요한 provider는 실제 credential을 넣기 전까지 연결 상태가 되지 않습니다.
 
 ## 실행
 
@@ -79,11 +92,26 @@ Python 3.14.3 가상환경과 locked dependencies를 설치한 작업 사본에�
 ```bash
 ./forge dev
 ./forge dashboard
+./forge agent
+./forge agent-http
 ```
 
 `./forge dev`는 후보 부품 계획, 실제 revision 변경, plan-vs-actual 검증, external evidence planning, 자동 재시험, BOM/build/test evidence와 release decision을 순서대로 재현합니다.
 
 `./forge dashboard`는 기본적으로 `http://127.0.0.1:43127/app/`에서 로컬 화면을 제공합니다. 다른 DB나 포트는 `FORGE_DATABASE_PATH`와 `FORGE_DASHBOARD_PORT`로 지정합니다.
+
+`./forge agent`는 newline-delimited JSON-RPC MCP server를 stdio로 실행합니다. Codex용
+repo-local plugin은 `plugins/forge-engineering-agent`에 있으며, 다른 위치에 설치했다면
+`FORGE_REPOSITORY_ROOT`를 이 저장소 경로로 지정합니다. 같은 `FORGE_DATABASE_PATH`를
+사용하면 LLM host와 operator console이 동일한 evidence ledger를 봅니다.
+
+`./forge agent-http`는 개발용 localhost MCP endpoint를
+`http://127.0.0.1:43128/mcp`에 엽니다. public 배포·OAuth·SSO는 이번 범위(9번 제외)에
+넣지 않았고, 필요한 경우 `FORGE_REMOTE_MCP_TOKEN`으로 bearer token만 추가할 수 있습니다.
+
+AI가 말한 BOM 가격은 `INFERRED ESTIMATE`로만 취급합니다. Nexar/Octopart는 필수 연결이
+아니며 catalog에서 제거했습니다. RELEASE 원가 gate에는 DigiKey/Mouser 같은 공급처
+응답 또는 조회 시각과 출처가 있는 수동 quote evidence가 필요합니다.
 
 ### GitHub App 연결
 

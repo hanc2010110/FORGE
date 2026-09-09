@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <meta name="description" content="FORGE conversational engineering collaboration workspace">
+    <meta name="description" content="FORGE Engineering Agent operator and evidence console">
     <title>
       FORGE · Conversational Engineering
     </title>
@@ -142,26 +142,22 @@
             <span id="chat-sidebar-title">FORGE</span>
           </a>
           <nav class="chat-nav" aria-label="Chat navigation">
-            <button type="button" data-guided-action="reset-demo">＋ New chat</button>
-            <a href="#guided-workflow">Projects</a>
-            <a href="#guided-workflow">Recent sessions</a>
-            <a href="#advanced-console">History</a>
+            <button type="button" data-guided-action="reset-demo">Agent home</button>
+            <a href="#guided-workflow">Project context</a>
+            <a href="#advanced-console">Evidence ledger</a>
+            <a href="#advanced-console">Audit history</a>
             <button id="open-settings-button" type="button">⚙ Settings</button>
           </nav>
-          <section class="predeploy-readiness" aria-labelledby="predeploy-title">
-            <h2 id="predeploy-title">Pre-deploy essentials</h2>
+          <section class="predeploy-readiness sidebar-connections" aria-labelledby="predeploy-title">
+            <h2 id="predeploy-title">Connections</h2>
+            <span class="sr-only">Agent and engineering source connections</span>
             <ul>
-              <li><span class="ready-dot complete"></span> Static chat UX</li>
-              <li><span class="ready-dot complete"></span> Local evidence ledger</li>
-              <li><span class="ready-dot complete"></span> Enforced RBAC + audit</li>
-              <li><span class="ready-dot complete"></span> Local cited RAG</li>
-              <li><span class="ready-dot complete"></span> STL parser + 3D context</li>
-              <li><span class="ready-dot complete"></span> Health + backup/restore</li>
               <li>
                 <span id="github-readiness-dot" class="ready-dot partial"></span>
                 <span id="github-readiness-label">GitHub App not connected</span>
               </li>
-              <li><span class="ready-dot blocked"></span> Live CAD/CAE/device connectors</li>
+              <li><span class="ready-dot complete"></span> Local files available</li>
+              <li><span class="ready-dot complete"></span> MCP agent available</li>
             </ul>
           </section>
           <footer class="sidebar-identity">
@@ -1647,20 +1643,20 @@
             <div>
               <p class="section-index">FORGE SETTINGS</p>
               <h2 id="settings-title">Integrations</h2>
-              <p>GitHub의 변경과 CI 결과를 읽기 전용 증거로 연결합니다.</p>
+              <p>연결 상태, 읽기 전용 권한과 증거 동기화를 관리합니다.</p>
             </div>
             <button id="close-settings-button" class="settings-close" type="button" aria-label="Close settings">×</button>
           </header>
           <div class="settings-body">
             <nav class="settings-nav" aria-label="Settings sections">
-              <button type="button" class="active">All integrations</button>
-              <p>Source control</p>
-              <p>CAD · PLM</p>
-              <p>CAE · Simulation</p>
-              <p>CI · Test</p>
-              <p>BOM · Supply</p>
-              <p>AI · RAG</p>
-              <p>Robot · Lab</p>
+              <button type="button" class="active" data-integration-filter="all">All integrations</button>
+              <button type="button" data-integration-filter="source_control">Source control</button>
+              <button type="button" data-integration-filter="cad_plm">CAD · PLM</button>
+              <button type="button" data-integration-filter="cae_simulation">CAE · Simulation</button>
+              <button type="button" data-integration-filter="ci_test">CI · Test</button>
+              <button type="button" data-integration-filter="bom_supply">BOM · Supply</button>
+              <button type="button" data-integration-filter="ai_rag">AI · RAG</button>
+              <button type="button" data-integration-filter="device_lab">Robot · Lab</button>
             </nav>
             <section class="integration-panel" aria-labelledby="github-settings-title">
               <div class="integration-title-row">
@@ -1673,17 +1669,6 @@
               <p class="settings-copy">
                 FORGE는 repository metadata, commit 변경 파일, open pull request, GitHub Actions 결과만 읽습니다. 토큰은 메모리에서만 사용하고 저장하지 않습니다.
               </p>
-              <section class="integration-catalog-section" aria-labelledby="integration-catalog-title">
-                <div class="integration-title-row">
-                  <div>
-                    <p class="section-index">CONNECTION ENVIRONMENT</p>
-                    <h3 id="integration-catalog-title">Engineering API catalog</h3>
-                  </div>
-                  <span id="integration-catalog-count" class="connection-badge">Loading</span>
-                </div>
-                <p>모든 연결은 읽기 전용 드라이버, 최소 권한, source/time/hash 증거 계약을 사용합니다. 아직 드라이버가 없는 항목은 Adapter required로 표시됩니다.</p>
-                <div id="integration-catalog" class="integration-catalog"></div>
-              </section>
               <form id="github-settings-form" class="github-settings-form" novalidate>
                 <div class="settings-grid">
                   <label>
@@ -1729,6 +1714,17 @@
                   <div id="github-changed-files" class="github-file-list"></div>
                 </div>
               </section>
+              <details id="integration-catalog-section" class="integration-catalog-section">
+                <summary>
+                  <span>
+                    <strong id="integration-catalog-title">전체 연결 카탈로그</strong>
+                    <small>사용 가능·연결됨·어댑터 필요 상태 보기</small>
+                  </span>
+                  <span id="integration-catalog-count" class="connection-badge">Loading</span>
+                </summary>
+                <p>공급자 이름이 보여도 실제 드라이버가 없으면 연결되지 않습니다. 모든 연결은 읽기 전용, 최소 권한, source/time/hash 증거 계약을 사용합니다.</p>
+                <div id="integration-catalog" class="integration-catalog" aria-labelledby="integration-catalog-title"></div>
+              </details>
               <aside class="settings-security-note">
                 <strong>저장 위치와 권한</strong>
                 <p>키는 Git 추적에서 제외된 <code>.forge-local/github/keys</code>에 0600 권한으로 저장됩니다. GitHub App은 Contents, Pull requests, Actions를 Read-only로 유지하세요.</p>

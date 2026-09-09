@@ -272,9 +272,9 @@ function engineeringComposer({ placeholder, action, label, value = "", attachmen
   if (attachments) {
     const tray = element("div", "asset-attachment-tray");
     tray.append(
-      guidedButton("＋ CAD / 설계 파일", "upload-cad", "composer-tool"),
-      guidedButton("◇ 로봇·기계 연결", "connect-machine", "composer-tool"),
-      guidedButton("⌁ 프로젝트 가져오기", "connect-project", "composer-tool"),
+      guidedButton("＋ 파일", "upload-cad", "composer-tool"),
+      guidedButton("◇ 장치 연결", "connect-machine", "composer-tool"),
+      guidedButton("⌁ 프로젝트", "connect-project", "composer-tool"),
     );
     const input = element("input");
     input.id = "composer-cad-file";
@@ -299,8 +299,11 @@ function engineeringComposer({ placeholder, action, label, value = "", attachmen
   textarea.placeholder = placeholder;
   textarea.value = value;
   textarea.setAttribute("aria-label", "Message FORGE about this engineering change");
-  inputRow.append(textarea, guidedButton(label, action, "composer-send"));
-  composer.append(inputRow, element("p", "composer-boundary", "Deterministic guided demo · planning simulation is advisory · no CAD writeback · no device control"));
+  const send = guidedButton("↑", action, "composer-send");
+  send.setAttribute("aria-label", label);
+  send.title = label;
+  inputRow.append(textarea, send);
+  composer.append(inputRow, element("p", "composer-boundary", "FORGE는 연결된 원본을 읽기만 하며, 확정 전에는 실행하지 않습니다."));
   return composer;
 }
 
@@ -389,6 +392,37 @@ function predeployEssentialsCard() {
   }
   card.append(list);
   return card;
+}
+
+function conversationWelcome() {
+  const welcome = element("section", "conversation-welcome");
+  const mark = element("span", "conversation-welcome-mark", "F");
+  const title = element("h3", "", "FORGE Agent backend");
+  const copy = element(
+    "p",
+    "",
+    guidedState.projectConnected
+      ? `${guidedState.assetName}이 연결되었습니다. 원하는 변경이나 검증할 상황을 말해 주세요.`
+      : "대화는 ChatGPT·Codex 같은 LLM에서 진행하고, 이 화면에서는 연결·증거·감사 상태를 확인합니다.",
+  );
+  const hostCard = element("section", "agent-host-card");
+  hostCard.append(
+    element("strong", "", "LLM host → FORGE tools → engineering systems"),
+    element("p", "", "FORGE는 설계 후보, 시뮬레이션 증거, 검증 정책의 독립된 기록 계층입니다."),
+  );
+  const steps = element("ol", "agent-host-steps");
+  for (const [label, detail] of [
+    ["1", "LLM에 CAD·프로젝트·BOM·데이터시트를 첨부"],
+    ["2", "대화로 설계안을 수정하고 명시적으로 후보 확정"],
+    ["3", "실제 Simulation·Test 증거를 연결한 뒤 FORGE가 READY/BLOCKED 판정"],
+  ]) {
+    const item = element("li", "");
+    item.append(element("span", "", label), element("p", "", detail));
+    steps.append(item);
+  }
+  hostCard.append(steps);
+  welcome.append(mark, title, copy, hostCard);
+  return welcome;
 }
 
 function armOptionCard(id, title, summary, details, recommended = false) {
@@ -816,20 +850,20 @@ function renderEngineeringSession() {
   const engineeringPane = element("section", "engineering-pane");
   engineeringPane.append(guidedHeader("ENGINEERING VIEW", "Upper Arm", "CAD context, candidate snapshot and solver results share one evidence-bound view."), armEngineeringView());
   const conversationPane = element("section", "forge-conversation-pane");
-  const conversationHeader = guidedHeader("FORGE", "What do you want to build or change?", "CAD, project, machine context는 +로 점진적으로 붙이고, 필요한 순간에만 Engineering Workspace를 엽니다.");
+  const conversationHeader = guidedHeader(
+    "FORGE",
+    guidedState.collaborationPhase === "idea"
+      ? "Agent operator console"
+      : "Upper Arm change",
+    "LLM host가 대화를 담당하고 이 화면은 도구·증거 상태를 보여줍니다.",
+  );
   conversationHeader.append(workspaceToggleButton());
   conversationPane.append(conversationHeader);
   const thread = element("section", "conversation-thread");
   if (guidedState.collaborationPhase === "idea") {
-    const contextStatus = guidedState.projectConnected
-      ? `${guidedState.assetName} context를 연결했습니다. STL 형상과 텍스트 근거는 프로젝트 원장에 저장됩니다. 바꾸고 싶은 부분이나 시뮬레이션 상황을 말하세요.`
-      : "CAD, 프로젝트, 설계 파일, BOM, 시험 결과 또는 읽기 전용 기계 context를 붙인 뒤 바로 말하거나, 아무 context 없이 아이디어부터 시작할 수 있습니다.";
-    thread.append(conversationMessage("forge", "FORGE", contextStatus, evidenceStack([
-      [guidedState.projectConnected ? "FACT" : "UNKNOWN", guidedState.projectConnected ? `${guidedState.connectionMode} · ${guidedState.assetName}` : "No CAD/project/machine context connected"],
-      ["UNKNOWN", "No design candidate confirmed"],
-    ]), predeployEssentialsCard()));
+    thread.append(conversationWelcome());
     conversationPane.append(thread, engineeringComposer({
-      placeholder: "Message FORGE...",
+      placeholder: "변경하고 싶은 부분이나 검증할 상황을 입력하세요",
       action: "send-arm-intent",
       label: "보내기",
       value: "",
@@ -939,7 +973,8 @@ function renderEngineeringSession() {
     }
   }
   if (guidedState.workspaceOpen) screen.append(engineeringPane);
-  screen.append(conversationPane, sessionStatusBar());
+  screen.append(conversationPane);
+  if (guidedState.collaborationPhase !== "idea") screen.append(sessionStatusBar());
   return screen;
 }
 
@@ -1600,22 +1635,40 @@ async function githubRequest(path, payload = null) {
   return result.data;
 }
 
+let integrationCatalogEntries = [];
+let integrationCatalogFilter = "all";
+
 function renderIntegrationCatalog(entries) {
+  integrationCatalogEntries = entries || integrationCatalogEntries;
   const catalog = byId("integration-catalog");
   replace(catalog);
-  for (const entry of entries || []) {
+  const visibleEntries = integrationCatalogFilter === "all"
+    ? integrationCatalogEntries
+    : integrationCatalogEntries.filter((entry) => entry.provider?.category === integrationCatalogFilter);
+  for (const entry of visibleEntries) {
     const provider = entry.provider || {};
     const card = element("article", `integration-card ${entry.connection_state || ""}`);
+    card.dataset.integrationCategory = display(provider.category);
     card.append(
       element("strong", "", provider.name),
       element("small", "", display(provider.category).replaceAll("_", " · ")),
+      element("small", "integration-auth", display(provider.auth_strategy)),
       element("span", "catalog-state", display(entry.status_summary)),
     );
     card.title = `${display(provider.auth_strategy)} · ${(provider.capabilities || []).join(", ")}`;
     catalog.append(card);
   }
-  const connected = (entries || []).filter((entry) => ["connected", "local_available"].includes(entry.connection_state)).length;
-  byId("integration-catalog-count").textContent = `${connected} / ${(entries || []).length} available`;
+  const connected = integrationCatalogEntries.filter((entry) => ["connected", "local_available"].includes(entry.connection_state)).length;
+  byId("integration-catalog-count").textContent = `${connected} / ${integrationCatalogEntries.length} available`;
+}
+
+function setIntegrationFilter(filter) {
+  integrationCatalogFilter = filter;
+  for (const button of document.querySelectorAll("[data-integration-filter]")) {
+    button.classList.toggle("active", button.dataset.integrationFilter === filter);
+  }
+  byId("integration-catalog-section").open = true;
+  renderIntegrationCatalog(integrationCatalogEntries);
 }
 
 async function loadIntegrationCatalog() {
@@ -3680,6 +3733,9 @@ byId("close-settings-button").addEventListener("click", () => byId("settings-dia
 byId("settings-dialog").addEventListener("click", (event) => {
   if (event.target === byId("settings-dialog")) byId("settings-dialog").close();
 });
+for (const button of document.querySelectorAll("[data-integration-filter]")) {
+  button.addEventListener("click", () => setIntegrationFilter(button.dataset.integrationFilter || "all"));
+}
 byId("github-test-button").addEventListener("click", () => runGitHubConnection("test"));
 byId("github-settings-form").addEventListener("submit", (event) => {
   event.preventDefault();

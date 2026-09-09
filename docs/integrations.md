@@ -34,7 +34,8 @@ Provider마다 인증·응답 계약이 다르므로 연결 API는 provider 전�
 
 ## 구현 상태
 
-- `local_artifacts`: 로컬 CAD·문서·시험 결과 입력 사용 가능
+- `local_artifacts`: 로컬 CAD·문서·시험 결과 입력 사용 가능. ASCII/binary STL은
+  3D mesh로, STEP은 schema/product/unit/point-bounds metadata summary로 파싱
 - `github`: GitHub App과 GitHub Actions read-only driver 사용 가능
   - commit changed files, open PR, exact-SHA Actions runs는 페이지를 끝까지 수집하고,
     수집 중 원본이 바뀌거나 안전 용량 한계에서 완전성을 증명할 수 없으면 evidence
@@ -47,8 +48,20 @@ Provider마다 인증·응답 계약이 다르므로 연결 API는 provider 전�
   - 저장된 증거는 조회 시점 기준 `fresh`/`stale` 상태와 경과 시간을 제공
   - GitHub sync 결과는 독립 integration evidence이며 프로젝트 release evidence로
     명시적으로 import·binding되기 전에는 `READY` 근거로 사용할 수 없음
-- 나머지 provider: typed catalog와 credential 요구사항은 준비됐으며 실제 driver를
-  구현하기 전까지 `Adapter required`로 표시
+- `gitlab`: project access token/OAuth를 가진 read-only pipeline client 계약 구현
+- `jenkins`: API token 기반 read-only build-result client 계약 구현
+- `onshape`: Onshape document metadata read client 계약 구현
+- `simscale`: SimScale simulation run metadata read client 계약 구현
+- `llm_host_mcp`: stdio MCP와 localhost HTTP MCP 개발 endpoint 구현. hosted
+  Responses/Embeddings client와 semantic retrieval index는 provider transport를 주입해
+  사용하며 release 판정 권한 없음
+- `hil_agent`, `ros2_edge`, `mqtt_device`, `opcua_lab`: raw device control은 여전히
+  금지. 대신 approved allowlist command 또는 edge evidence import 결과만 tier-bound
+  evidence로 수집하는 계약 구현
+- DigiKey/Mouser/Nexar 같은 BOM 가격 공급처는 이번 범위에서 제외. 수동 quote evidence
+  또는 추후 provider driver로만 release cost gate에 사용
+- 나머지 enterprise provider: typed catalog와 credential 요구사항은 준비됐으며 실제
+  driver를 구현하기 전까지 `Adapter required`로 표시
 
 ## 필수 보안·검증 체크리스트
 

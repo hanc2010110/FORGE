@@ -112,6 +112,10 @@ def _field(
 
 _API_KEY = (_field("api_key", "API key", "secret", secret=True),)
 _OAUTH = (_field("tenant_url", "Tenant URL", "url"),) + _API_KEY
+_BEARER = (
+    _field("base_url", "Base URL", "url"),
+    _field("access_token", "OAuth access token", "secret", secret=True),
+)
 _EDGE = (
     _field("endpoint", "Edge agent endpoint", "url"),
     _field("client_certificate", "Client certificate", "file", secret=True),
@@ -125,7 +129,42 @@ PROVIDERS = (
         category=IntegrationCategory.CAD_PLM,
         implementation=IntegrationImplementation.LOCAL,
         auth_strategy="Local file picker",
-        capabilities=("documents.read", "stl.read", "test_results.read"),
+        capabilities=(
+            "documents.read",
+            "solidworks_exports.read",
+            "step.read",
+            "stl.read",
+            "test_results.read",
+        ),
+    ),
+    IntegrationProvider(
+        provider_id="llm_host_mcp",
+        name="LLM host / MCP bridge",
+        category=IntegrationCategory.AI_RAG,
+        implementation=IntegrationImplementation.LOCAL,
+        auth_strategy="Local stdio or localhost HTTP MCP",
+        capabilities=("embeddings.read", "tools.call", "tools.discover"),
+    ),
+    IntegrationProvider(
+        provider_id="openai_hosted",
+        name="OpenAI hosted reasoning + embeddings",
+        category=IntegrationCategory.AI_RAG,
+        implementation=IntegrationImplementation.LIVE,
+        auth_strategy="API key",
+        capabilities=("embeddings.read", "recommendations.read"),
+        credential_fields=(
+            _field("base_url", "API base URL", "url"),
+            _field("api_key", "API key", "secret", secret=True),
+            _field("model", "Model ID", "text"),
+        ),
+    ),
+    IntegrationProvider(
+        provider_id="manual_bom_quote",
+        name="Manual BOM quote evidence",
+        category=IntegrationCategory.BOM_SUPPLY,
+        implementation=IntegrationImplementation.LOCAL,
+        auth_strategy="Versioned file or operator import",
+        capabilities=("prices.read", "quotes.read"),
     ),
     IntegrationProvider(
         provider_id="github",
@@ -146,28 +185,35 @@ PROVIDERS = (
         provider_id="gitlab",
         name="GitLab + CI",
         category=IntegrationCategory.SOURCE_CONTROL,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="OAuth or project access token",
         capabilities=("commits.read", "merge_requests.read", "pipelines.read"),
-        credential_fields=_OAUTH,
+        credential_fields=(
+            _field("base_url", "GitLab base URL", "url"),
+            _field("project_path", "Project path", "text"),
+            _field("api_key", "Read API token", "secret", secret=True),
+        ),
     ),
     IntegrationProvider(
         provider_id="onshape",
         name="Onshape",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
-        auth_strategy="OAuth 2.0",
+        implementation=IntegrationImplementation.LIVE,
+        auth_strategy="OAuth 2.0 bearer token",
         capabilities=("assemblies.read", "documents.read", "revisions.read"),
-        credential_fields=(_field("tenant_url", "Tenant URL", "url"),),
+        credential_fields=(
+            _field("base_url", "Onshape base URL", "url"),
+            _field("access_token", "OAuth access token", "secret", secret=True),
+        ),
     ),
     IntegrationProvider(
         provider_id="autodesk_aps",
         name="Autodesk Platform Services",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="OAuth 2.0 service account",
         capabilities=("derivatives.read", "models.read", "versions.read"),
-        credential_fields=_OAUTH,
+        credential_fields=_BEARER,
     ),
     IntegrationProvider(
         provider_id="solidworks_3dexperience",
@@ -191,19 +237,19 @@ PROVIDERS = (
         provider_id="windchill",
         name="PTC Windchill",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="Windchill REST/OAuth",
         capabilities=("bom.read", "change_notices.read", "revisions.read"),
-        credential_fields=_OAUTH,
+        credential_fields=_BEARER,
     ),
     IntegrationProvider(
         provider_id="aras_innovator",
         name="Aras Innovator",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="OAuth 2.0",
         capabilities=("bom.read", "changes.read", "items.read"),
-        credential_fields=_OAUTH,
+        credential_fields=_BEARER,
     ),
     IntegrationProvider(
         provider_id="ansys",
@@ -218,29 +264,40 @@ PROVIDERS = (
         provider_id="simscale",
         name="SimScale",
         category=IntegrationCategory.CAE_SIMULATION,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="API key",
         capabilities=("jobs.read", "projects.read", "results.read"),
-        credential_fields=_API_KEY,
+        credential_fields=(
+            _field("base_url", "SimScale API base URL", "url"),
+            _field("api_key", "API key", "secret", secret=True),
+        ),
     ),
     IntegrationProvider(
         provider_id="matlab_simulink",
         name="MATLAB / Simulink",
         category=IntegrationCategory.CAE_SIMULATION,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
-        auth_strategy="On-premise execution agent",
+        implementation=IntegrationImplementation.LIVE,
+        auth_strategy="MATLAB Production Server bearer token",
         capabilities=("models.read", "results.read", "runs.read"),
-        credential_fields=_EDGE,
-        requires_edge_agent=True,
+        credential_fields=(
+            _field("base_url", "MATLAB Production Server URL", "url"),
+            _field("access_token", "Bearer token", "secret", secret=True),
+            _field("application", "Deployed application", "text"),
+        ),
     ),
     IntegrationProvider(
         provider_id="jenkins",
         name="Jenkins",
         category=IntegrationCategory.CI_TEST,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LIVE,
         auth_strategy="API token",
         capabilities=("artifacts.read", "builds.read", "tests.read"),
-        credential_fields=_OAUTH,
+        credential_fields=(
+            _field("base_url", "Jenkins base URL", "url"),
+            _field("job_path", "Job path", "text"),
+            _field("username", "Username", "text"),
+            _field("api_key", "API token", "secret", secret=True),
+        ),
     ),
     IntegrationProvider(
         provider_id="digikey",
@@ -259,36 +316,6 @@ PROVIDERS = (
         auth_strategy="API key",
         capabilities=("availability.read", "parts.read", "prices.read"),
         credential_fields=_API_KEY,
-    ),
-    IntegrationProvider(
-        provider_id="nexar_octopart",
-        name="Nexar / Octopart",
-        category=IntegrationCategory.BOM_SUPPLY,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
-        auth_strategy="OAuth 2.0 client credentials",
-        capabilities=("offers.read", "parts.read", "prices.read"),
-        credential_fields=_API_KEY,
-    ),
-    IntegrationProvider(
-        provider_id="openai",
-        name="OpenAI",
-        category=IntegrationCategory.AI_RAG,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
-        auth_strategy="Project API key",
-        capabilities=("embeddings.invoke", "responses.invoke"),
-        credential_fields=(
-            _field("project_id", "Project ID", "text"),
-            *_API_KEY,
-        ),
-    ),
-    IntegrationProvider(
-        provider_id="azure_openai",
-        name="Azure OpenAI",
-        category=IntegrationCategory.AI_RAG,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
-        auth_strategy="Microsoft Entra ID or API key",
-        capabilities=("embeddings.invoke", "responses.invoke"),
-        credential_fields=_OAUTH,
     ),
     IntegrationProvider(
         provider_id="ros2_edge",
@@ -324,7 +351,7 @@ PROVIDERS = (
         provider_id="hil_agent",
         name="Bench / HIL evidence agent",
         category=IntegrationCategory.DEVICE_LAB,
-        implementation=IntegrationImplementation.ADAPTER_REQUIRED,
+        implementation=IntegrationImplementation.LOCAL,
         auth_strategy="Signed local agent",
         capabilities=("artifacts.read", "runs.read", "tests.read"),
         credential_fields=_EDGE,
@@ -363,6 +390,9 @@ class IntegrationHub:
             elif provider.implementation is IntegrationImplementation.LOCAL:
                 state = "local_available"
                 summary = "Available locally"
+            elif provider.implementation is IntegrationImplementation.LIVE:
+                state = "not_connected"
+                summary = "Ready to connect"
             else:
                 state = "adapter_required"
                 summary = "Adapter required"

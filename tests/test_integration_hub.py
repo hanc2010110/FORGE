@@ -50,9 +50,9 @@ class IntegrationHubTests(unittest.TestCase):
                 "jenkins",
                 "digikey",
                 "mouser",
-                "nexar_octopart",
-                "openai",
-                "azure_openai",
+                "llm_host_mcp",
+                "openai_hosted",
+                "manual_bom_quote",
                 "ros2_edge",
                 "mqtt_device",
                 "opcua_lab",
@@ -69,6 +69,38 @@ class IntegrationHubTests(unittest.TestCase):
             if item["provider"]["provider_id"] == "local_artifacts"
         )
         self.assertEqual(local["connection_state"], "local_available")
+        llm_host = next(
+            item
+            for item in catalog
+            if item["provider"]["provider_id"] == "llm_host_mcp"
+        )
+        self.assertEqual(llm_host["connection_state"], "local_available")
+        self.assertNotIn(
+            "nexar_octopart",
+            provider_ids,
+            "one aggregator must not be a mandatory product dependency",
+        )
+        credential_ready = [
+            item
+            for item in catalog
+            if item["provider"]["provider_id"]
+            in {
+                "gitlab",
+                "jenkins",
+                "onshape",
+                "autodesk_aps",
+                "windchill",
+                "aras_innovator",
+                "simscale",
+                "matlab_simulink",
+                "openai_hosted",
+            }
+        ]
+        self.assertTrue(
+            all(
+                item["connection_state"] == "not_connected" for item in credential_ready
+            )
+        )
         unimplemented = [
             item
             for item in catalog

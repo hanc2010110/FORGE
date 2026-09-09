@@ -1,0 +1,19 @@
+{
+  "name": "forge-engineering-agent",
+  "version": "0.1.0",
+  "description": "Forge Engineering Agent plugin",
+  "author": {
+    "name": "FORGE"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Forge Engineering Agent",
+    "shortDescription": "Evidence-backed engineering change agent for robots and embedded systems.",
+    "longDescription": "Discuss a hardware change in Codex, freeze the approved design, bind simulation and test evidence, and let the independent FORGE backend evaluate release readiness.",
+    "developerName": "FORGE",
+    "category": "Developer Tools",
+    "capabilities": ["MCP tools", "Engineering evidence", "Release verification"],
+    "defaultPrompt": "Use FORGE to inspect my project context, discuss an evidence-backed change plan, ask before freezing a candidate or recording results, and let FORGE—not the language model—decide release readiness."
+  },
+  "mcpServers": "./.mcp.json"
+}

@@ -8,8 +8,11 @@ from typing import cast
 from pydantic import ValidationError
 
 from forge_core.cad_geometry import (
+    MAX_STEP_BYTES,
     MAX_STL_BYTES,
     CADGeometryAsset,
+    STEPGeometrySummary,
+    parse_step_summary,
     parse_stl_asset,
 )
 
@@ -120,6 +123,68 @@ class CADGeometryTests(unittest.TestCase):
     def test_source_metadata_requires_utc_timestamp(self) -> None:
         with self.assertRaises(ValidationError):
             self.parse(ascii_stl(), captured_at=datetime(2026, 9, 3, 12))
+
+    def test_step_summary_extracts_units_products_points_and_hashes(self) -> None:
+        payload = b"""ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('FORGE STEP fixture'),'2;1');
+FILE_NAME('upper_arm.step','2026-09-09T12:00:00Z',('FORGE'),('FORGE'),'','','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN_CC2'));
+ENDSEC;
+DATA;
+#1=PRODUCT('UPPER_ARM','Upper Arm','',(#2));
+#2=PRODUCT_CONTEXT('',#3,'mechanical');
+#3=APPLICATION_CONTEXT('configuration controlled 3d designs');
+#10=LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.);
+#20=CARTESIAN_POINT('',(0.,0.,0.));
+#21=CARTESIAN_POINT('',(100.,20.,10.));
+#22=CARTESIAN_POINT('',(-5.,30.,12.5));
+ENDSEC;
+END-ISO-10303-21;
+"""
+        summary = parse_step_summary(
+            asset_id="upper-arm-step",
+            project_id="robot-arm",
+            tenant_id="local-org",
+            source_uri="file:///upper_arm.step",
+            source_version="rev-b",
+            captured_at=NOW,
+            content=payload,
+        )
+        self.assertIsInstance(summary, STEPGeometrySummary)
+        self.assertEqual(summary.geometry_format, "step")
+        self.assertEqual(summary.schema_names, ("AUTOMOTIVE_DESIGN_CC2",))
+        self.assertEqual(summary.length_unit, "millimetre")
+        self.assertEqual(summary.product_names, ("UPPER_ARM",))
+        self.assertEqual(summary.point_count, 3)
+        bounds = summary.bounds
+        if bounds is None:
+            raise AssertionError("expected STEP point bounds")
+        self.assertEqual(bounds.maximum.x, 100)
+        self.assertEqual(bounds.minimum.x, -5)
+        self.assertEqual(summary.content_sha256[:7], "sha256:")
+
+    def test_step_summary_rejects_non_step_or_unbounded_payloads(self) -> None:
+        with self.assertRaisesRegex(ValueError, "STEP"):
+            parse_step_summary(
+                asset_id="bad",
+                project_id="robot-arm",
+                tenant_id="local-org",
+                source_uri="file:///bad.step",
+                source_version="rev-b",
+                captured_at=NOW,
+                content=b"not step",
+            )
+        with self.assertRaisesRegex(ValueError, "byte bound"):
+            parse_step_summary(
+                asset_id="bad",
+                project_id="robot-arm",
+                tenant_id="local-org",
+                source_uri="file:///bad.step",
+                source_version="rev-b",
+                captured_at=NOW,
+                content=b"x" * (MAX_STEP_BYTES + 1),
+            )
 
 
 if __name__ == "__main__":

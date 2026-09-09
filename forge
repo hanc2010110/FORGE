@@ -21,6 +21,14 @@ case "${command_name}" in
     cd "${FORGE_ROOT}"
     "${FORGE_PYTHON}" -m forge_core.dashboard_server
     ;;
+  agent)
+    cd "${FORGE_ROOT}"
+    "${FORGE_PYTHON}" -m forge_core.mcp_server
+    ;;
+  agent-http)
+    cd "${FORGE_ROOT}"
+    "${FORGE_PYTHON}" -m forge_core.remote_mcp_server
+    ;;
   test)
     cd "${FORGE_ROOT}"
     "${FORGE_COVERAGE}" erase
@@ -48,7 +56,7 @@ case "${command_name}" in
     "${BASH_SOURCE[0]}" test
     ;;
   *)
-    echo "usage: ./forge {dev|dashboard|test|lint|typecheck|lockcheck|verify}" >&2
+    echo "usage: ./forge {dev|dashboard|agent|agent-http|test|lint|typecheck|lockcheck|verify}" >&2
     exit 2
     ;;
 esac

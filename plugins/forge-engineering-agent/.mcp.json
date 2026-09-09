@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "forge-engineering-agent": {
+      "command": "python3",
+      "args": ["./scripts/launch.py"],
+      "cwd": ".",
+      "env_vars": [
+        "FORGE_REPOSITORY_ROOT",
+        "FORGE_DATABASE_PATH",
+        "FORGE_CONFIG_DIR"
+      ],
+      "startup_timeout_sec": 30
+    }
+  }
+}

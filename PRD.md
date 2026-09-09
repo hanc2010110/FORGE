@@ -1,4 +1,4 @@
-# Project FORGE — AI Engineering Change & Resolution Platform PRD v7
+# Project FORGE — LLM-hosted Engineering Agent PRD v8
 
 - 작성일: 2026-08-31
 - 상태: 제품 및 구현 기준선
@@ -6,13 +6,18 @@
 
 ## 1. 제품 정의
 
-FORGE는 로봇과 임베디드 제품의 하드웨어 변경을 source-bound evidence로 계획, 검증, 진단, 해결하고 출시 준비 상태를 판정하는 AI Engineering Change & Resolution Platform이다.
+FORGE는 LLM 안에서 엔지니어처럼 대화하면서 로봇과 임베디드 제품의 하드웨어 변경을 source-bound evidence로 계획, 검증, 진단, 해결하고 출시 준비 상태를 판정하는 Engineering Reasoning Agent다.
+
+`LLM = primary conversation UX`, `FORGE = independent engineering authority`,
+`CAD/simulation/BOM/datasheet/CI/lab = tools and evidence sources`가 제품 경계다.
+FORGE backend는 특정 LLM vendor에 종속되지 않으며 MCP, 자체 Web App, CAD plugin 또는
+Enterprise API에서 동일한 immutable evidence와 policy 계약을 사용한다.
 
 사용자에게 보이는 흐름은 `CONNECT/IMPORT -> PLAN -> VERIFY -> RELEASE`다. 내부 작업 루프는 `PLAN <-> DESIGN -> VERIFY -> DIAGNOSE -> FIX -> RE-VERIFY -> RELEASE`다.
 
 FORGE는 CAD, PLM, Git, CI, simulation, bench, HIL, 실제 장치 시험 시스템을 대체하지 않는다. 각 시스템이 소유한 revision, artifact, log, 결과를 읽기 전용 snapshot과 immutable sidecar record로 연결하는 validation layer다.
 
-현재 로컬 pilot은 deterministic rule/policy checks, guided conversational workspace, immutable ledgers, 실제 STL 형상 parsing/viewing, source-grounded local RAG, RBAC enforcement와 audit, health/backup/restore를 제공한다. Hosted production AI agent와 live external tool execution은 제공하지 않는다. 향후 hosted LLM session과 connector-mediated automation도 같은 evidence boundary를 지켜야 하며, 자동 write-back이나 device control을 제품 계약으로 추가하지 않는다.
+현재 로컬 pilot은 deterministic rule/policy checks, immutable ledgers, 실제 STL 형상 parsing/viewing, source-grounded local RAG, RBAC enforcement와 audit, health/backup/restore, host-neutral MCP agent gateway와 Codex plugin을 제공한다. Hosted LLM은 FORGE 내부 기능이 아니라 host로 연결한다. Live CAE/CAD/device execution은 아직 제공하지 않으며 자동 write-back이나 generic device control을 제품 계약으로 추가하지 않는다.
 
 ## 2. 해결할 문제
 
@@ -75,6 +80,11 @@ Resolve가 만든 새 immutable PLAN draft에 대해 actual snapshot과 evidence
 
 MVP에 포함한다.
 
+- LLM host가 primary conversation UX가 되는 MCP engineering agent surface
+- read-only context tools와 명시적 승인 대상 mutation tools의 분리
+- `attach -> discuss -> plan -> confirm -> simulate/test -> revise -> verify/release`
+  conversation protocol
+
 - read-only connector manifest와 manual/imported snapshot 계약
 - connected device, CAD model, design drawing, PLM snapshot, manual snapshot 자산 입력 계약
 - source-bound component replacement/add/remove scenario
@@ -89,7 +99,8 @@ MVP에 포함한다.
 - release evidence ingest와 deterministic readiness decision
 - append-only SQLite sidecar persistence
 - loopback-only API with Host, Origin, CSRF, content-type, body-limit, idempotency and optimistic concurrency protections
-- `/app/` static operator console for CONNECT/IMPORT, PLAN, VERIFY and RELEASE
+- `/app/` secondary operator/evidence console for integrations, provenance, audit,
+  candidates, simulations and release decisions
 - bounded ASCII/binary STL parsing, immutable geometry provenance and contextual
   read-only 3D canvas
 - project/tenant-scoped text ingestion, deterministic cited local RAG and persisted
@@ -99,30 +110,31 @@ MVP에 포함한다.
 
 MVP에서 구조만 정의하고 production 기능으로 약속하지 않는 항목은 다음과 같다.
 
-- hosted LLM/embedding-backed conversational engineering session
+- production vendor-hosted LLM/embedding credential storage inside the FORGE backend
 - production conversational design alternative authoring beyond structured forms
 - evidence-bound diagnosis and Resolve API routes where not wired into a release workflow
-- automatic re-verification after Resolve
-- connector-mediated automation against CAD, PLM, Git, CI, ticketing or test systems
-- semantic/vector RAG and externally hosted AI explanation drafts
+- external-system write-back automation against CAD, PLM, Git, CI, ticketing or test systems
 
 ### 5.1 배포 시험 범위 완성도
 
-로컬 pilot 범위는 약 **80%**로 판정한다. 이 수치는 코드 coverage가 아니라 첫 배포
-시험에 필요한 제품 역량의 가중치다.
+로컬 pilot 범위는 약 **88%**로 판정한다. BOM 가격 공급처와 로그인/멀티테넌시를
+제외한 상용 전 단계 기준은 약 **80%**로 판정한다. 이 수치는 코드 coverage가 아니라
+첫 배포 시험에 필요한 제품 역량의 가중치다.
 
 | 역량 | 가중치 | 현재 |
 | --- | ---: | ---: |
 | 검증·릴리스 evidence kernel | 30% | 90% |
-| Chat-first 변경·설계 loop | 25% | 88% |
-| 권한·감사·source-grounded AI | 20% | 85% |
-| 로컬 운영·복구 기반 | 15% | 78% |
-| 실제 외부 ecosystem 연동 | 10% | 35% |
+| LLM agent/tool 변경·설계 loop | 25% | 88% |
+| 권한·감사·source-grounded AI | 20% | 88% |
+| 로컬 운영·복구 기반 | 15% | 84% |
+| 실제 외부 ecosystem 연동 | 10% | 60% |
 
-가중 결과는 약 81%이며 보수적으로 80%로 보고한다. 외부 ecosystem 35%는 실제 STL
-import와 connector 계약까지 포함하지만 STEP/SolidWorks, CAE, device, Git/CI/PLM/BOM
-credential 연동은 포함하지 않는다. 따라서 이 평가는 로컬 pilot 배포 시험 준비도이며
-완전한 enterprise SaaS 또는 안전 인증 완료를 의미하지 않는다.
+가중 결과는 약 88%이다. 외부 ecosystem 60%는 GitHub live 연결, STEP/STL local CAD
+파싱, hosted AI/embedding transport 계약, GitLab/Jenkins/Onshape/SimScale read-only
+client 계약, allowlisted simulation/bench/HIL/device evidence runner까지 포함한다.
+BOM 가격 공급처(6번)와 로그인/멀티테넌시(9번)는 이번 산정에서 제외한다. 따라서 이
+평가는 로컬 pilot 배포 시험 준비도이며 완전한 enterprise SaaS 또는 안전 인증 완료를
+의미하지 않는다.
 
 이 항목은 future scope이며, 구현 전에도 동일한 immutable sidecar, source-binding and no-writeback constraints를 따라야 한다.
 
