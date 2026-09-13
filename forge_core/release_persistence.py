@@ -265,9 +265,106 @@ class StoredReleaseDecision(ContractModel):
         return self
 
 
+class StoredAutomaticReverificationTrigger(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    trigger_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    project_id: str = Field(min_length=1)
+    analysis_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    preview_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    plan_verification_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    evidence_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    approval_id: str = Field(min_length=1)
+    approved_by: str = Field(min_length=1)
+    approved_at: datetime
+    local_installation_id: str = Field(min_length=1)
+    org_id: str = Field(min_length=1)
+    actor_id: str = Field(min_length=1)
+    created_at: datetime
+
+    @field_validator("approved_at", "created_at")
+    @classmethod
+    def trigger_timestamps_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "automatic reverification timestamp")
+
+    @model_validator(mode="after")
+    def trigger_hash_must_match_payload(self) -> StoredAutomaticReverificationTrigger:
+        expected = canonical_sha256(
+            self.model_copy(update={"trigger_hash": "sha256:" + "0" * 64})
+        )
+        if self.trigger_hash != expected:
+            raise ValueError("automatic reverification trigger hash does not match")
+        if self.approved_at > self.created_at:
+            raise ValueError(
+                "automatic reverification approval cannot be from the future"
+            )
+        if self.approved_by != self.actor_id:
+            raise ValueError(
+                "automatic reverification approval actor does not match trigger actor"
+            )
+        return self
+
+
+class StoredAutomaticReverificationReceipt(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    receipt_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    trigger_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    project_id: str = Field(min_length=1)
+    analysis_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    preview_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    plan_verification_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    decision_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    release_status: Literal["READY", "BLOCKED"]
+    completed_at: datetime
+
+    @field_validator("completed_at")
+    @classmethod
+    def completion_timestamp_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "automatic reverification completion")
+
+    @model_validator(mode="after")
+    def receipt_hash_must_match_payload(self) -> StoredAutomaticReverificationReceipt:
+        expected = canonical_sha256(
+            self.model_copy(update={"receipt_hash": "sha256:" + "0" * 64})
+        )
+        if self.receipt_hash != expected:
+            raise ValueError("automatic reverification receipt hash does not match")
+        return self
+
+
+class StoredAutomaticReverificationFailure(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    failure_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    trigger_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    project_id: str = Field(min_length=1)
+    attempt: int = Field(ge=1)
+    error_code: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$"
+    )
+    failed_at: datetime
+
+    @field_validator("failed_at")
+    @classmethod
+    def failure_timestamp_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "automatic reverification failure")
+
+    @model_validator(mode="after")
+    def failure_hash_must_match_payload(self) -> StoredAutomaticReverificationFailure:
+        expected = canonical_sha256(
+            self.model_copy(update={"failure_hash": "sha256:" + "0" * 64})
+        )
+        if self.failure_hash != expected:
+            raise ValueError("automatic reverification failure hash does not match")
+        return self
+
+
 __all__ = [
     "RawReleaseEvidence",
     "StoredChangeImpactAssessment",
+    "StoredAutomaticReverificationReceipt",
+    "StoredAutomaticReverificationFailure",
+    "StoredAutomaticReverificationTrigger",
     "StoredConnectorSnapshot",
     "StoredRawReleaseEvidence",
     "StoredReleaseDecision",

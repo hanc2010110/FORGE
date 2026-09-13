@@ -9,7 +9,7 @@ FORGE는 로봇·임베디드 팀을 위한 **독립형 Engineering Reasoning Ag
 3. **VERIFY** — 실제 snapshot과 imported evidence를 계획과 비교해 예상된 변경, 누락된 변경, 예상 밖 변경을 구분합니다.
 4. **RELEASE** — 실제 evidence와 policy만 사용해 `READY` 또는 `BLOCKED` 판정과 감사 가능한 readiness breakdown을 생성합니다.
 
-내부 제품 루프는 `PLAN <-> DESIGN -> VERIFY -> DIAGNOSE -> FIX -> RE-VERIFY -> RELEASE`입니다. 현재 구현은 배포 시험용 로컬 pilot입니다. deterministic evidence kernel, 실제 ASCII/binary STL 형상 파싱과 STEP metadata summary, project-scoped lexical/semantic cited RAG, RBAC 감사 경계, 운영 백업·복구, read-only GitHub App 연결, GitLab/Jenkins/Onshape/SimScale credential-ready client, simulation/bench/HIL/device evidence runner 계약까지 이어집니다. SolidWorks native CAD editing, BOM live 가격 공급처, 로그인/멀티테넌시 운영은 아직 production 기능으로 약속하지 않습니다.
+내부 제품 루프는 `PLAN <-> DESIGN -> VERIFY -> DIAGNOSE -> FIX -> RE-VERIFY -> RELEASE`입니다. 현재 구현은 배포 시험용 로컬 pilot입니다. deterministic evidence kernel, 실제 ASCII/binary STL 형상 파싱, STEP 및 SolidWorks export metadata 검사, project-scoped lexical/semantic cited RAG, RBAC 감사 경계, 운영 백업·복구, read-only GitHub App과 외부 조회 driver, 사용자 승인에 결속된 CAE 실행 driver, simulation/bench/HIL/device evidence runner 계약까지 이어집니다. SolidWorks native CAD editing, BOM live 가격 공급처, 로그인/멀티테넌시 운영은 아직 production 기능으로 약속하지 않습니다.
 
 기본 대화 UX는 LLM host가 담당합니다. `./forge agent`는 host가 사용할 MCP tool server를
 실행하고, `/app/`은 연결 상태, source evidence, candidate, simulation, audit와 release
@@ -35,7 +35,7 @@ decision을 확인하는 보조 operator console입니다. 자체 웹 화면은 
 - plan-vs-actual deviation 검증
 - imported test evidence와 external evidence plan 검증
 - immutable SQLite/API records for planning-only design proposals, evidence-bound blocker diagnoses, fix proposals, and replan seeds
-- confirmed design candidates, exact simulation bindings, evidence claims, append-only conversation state transitions를 저장하는 SQLite v7/API ledger
+- authenticated actor·exact request·single-use nonce·candidate hash receipt, confirmed design candidates, exact simulation bindings, evidence claims, append-only conversation state transitions와 durable automatic-reverification outbox를 저장하는 SQLite v13/API ledger
 - release evidence ingest와 deterministic `READY`/`BLOCKED` decision
 - loopback-only API with Host, Origin, CSRF, body-limit, idempotency and optimistic concurrency checks
 - `/app/` secondary operator/evidence console with a compact local workflow preview,
@@ -47,8 +47,9 @@ decision을 확인하는 보조 operator console입니다. 자체 웹 화면은 
   while preserving FORGE as the independent engineering backend
 - ASCII/binary STL 파일의 bounded parsing, 형상·bounds·content/geometry hash 저장,
   프로젝트 export와 drag-to-rotate dependency-free 3D canvas
-- STEP 파일의 bounded metadata parsing, schema/product/unit/point-bounds 추출과
-  source/hash-bound summary
+- STEP 및 SolidWorks STEP/STL export ZIP의 bounded read-only 검사,
+  schema/product/unit/point-bounds와 source/hash-bound summary. 이 MCP 검사 결과는
+  비영속이며 release evidence가 아님
 - project-scoped text ingestion, deterministic retrieval, cited local answer와
   immutable conversation runtime ledger. 이 로컬 provider는 release 판정 권한이 없음
 - hosted AI Responses/Embeddings provider를 꽂을 수 있는 HTTPS transport 계약과
@@ -58,12 +59,22 @@ decision을 확인하는 보조 operator console입니다. 자체 웹 화면은 
 - deep SQLite health/readiness, SHA-256 verified backup과 기존 파일을 덮어쓰지 않는
   restore verification
 - operator Settings의 Integration Hub: Git, CAD/PLM, CAE, CI, BOM 공급처,
-  LLM host/MCP, robot/bench/HIL 연결을 동일한 read-only driver 계약으로 추가할 수 있는
-  typed catalog와 상태 API
-- GitLab pipeline, Jenkins build, Onshape document, SimScale run을 읽기 전용으로 붙일
-  수 있는 credential-ready client 계약
+  LLM host/MCP, robot/bench/HIL 연결을 `read_only` 또는 `approved_execution`으로
+  구분하는 typed catalog와 상태 API
+- GitLab/Jenkins/Onshape/Autodesk APS/Windchill/Aras read-only client와
+  exact-request-approved SimScale/MATLAB client 계약, 별도 SQLite CAE execution
+  ledger의 restart-safe replay/resume. Integration Hub의
+  external read 결과는 source URL·UTC 수집시각·원문/정규 payload hash·pagination 상태를
+  가진 immutable connector envelope로 반환됨. 이는 domain release evidence가 아니며,
+  `Driver available`은 실제 credential 연결·동기화 완료를 뜻하지 않음
 - approved allowlist command만 실행 가능한 local evidence runner. simulation, bench,
   HIL, physical-device tier를 분리하고 stdout/stderr/result hash를 남김
+- ROS2/MQTT/OPC-UA/HIL artifact별 source scheme을 검증하는 signed no-control edge
+  envelope와 nonce/sequence replay 차단. 개발 HMAC 대신 운영 verifier를 주입할 수 있음
+- 새 evidence hash와 사용자 release 확인이 모두 있을 때만 deterministic release
+  verifier를 호출하는 iteration orchestrator. 승인·증거·candidate에 결속된 trigger와
+  판정 receipt를 SQLite에 원자적으로 저장해 재시작 후에도 미완료 재검증을 복구하고,
+  같은 evidence replay는 기존 receipt를 재사용
 - `./forge agent-http`의 localhost Streamable-HTTP-shaped MCP 개발 endpoint
 - GitHub App ID, Installation ID와 `.pem` 파일 선택을 통한 실제 연결 시험,
   저장소 metadata·최신 commit 변경 파일·open PR·exact-commit Actions 수집
@@ -77,12 +88,14 @@ decision을 확인하는 보조 operator console입니다. 자체 웹 화면은 
 현재 로컬 pilot 범위의 가중 완성도는 약 **88%**입니다. 전체 상용 제품 기준으로는
 BOM 가격 공급처와 로그인/멀티테넌시를 이번 범위에서 제외했을 때 약 **80%** 수준입니다.
 이는 테스트 coverage와 다른 제품 범위 지표입니다: 검증·릴리스 kernel 90%, LLM
-agent/tool workflow 88%, 권한·감사·근거 RAG 88%, 로컬 운영 기반 84%, 외부 live
-ecosystem 60%를 pilot 우선순위로 가중했습니다.
+agent/tool workflow 88%, 권한·감사·근거 RAG 88%, 로컬 운영 기반 84%, 외부 ecosystem
+60%를 pilot 우선순위로 가중했습니다.
 
-남은 production 범위는 SolidWorks native 편집/assembly kernel, Autodesk·Teamcenter·
-Windchill·Aras 같은 enterprise PLM driver, Ansys/MATLAB 같은 vendor solver driver,
-BOM 공급처 live 가격, SSO/managed secret vault, hosted monitoring과 멀티테넌시입니다.
+남은 production 범위는 SolidWorks native 편집/assembly kernel, 실제 계정별
+ GitLab/Jenkins/CAD·PLM의 실제 credential 연결 수명주기와 domain evidence 정규화,
+ Teamcenter·3DEXPERIENCE·Ansys
+site adapter, vendor sandbox 검증, BOM 공급처 live 가격, SSO/managed secret vault,
+hosted monitoring과 멀티테넌시입니다.
 자격증명이 필요한 provider는 실제 credential을 넣기 전까지 연결 상태가 되지 않습니다.
 
 ## 실행
@@ -106,8 +119,9 @@ repo-local plugin은 `plugins/forge-engineering-agent`에 있으며, 다른 위�
 사용하면 LLM host와 operator console이 동일한 evidence ledger를 봅니다.
 
 `./forge agent-http`는 개발용 localhost MCP endpoint를
-`http://127.0.0.1:43128/mcp`에 엽니다. public 배포·OAuth·SSO는 이번 범위(9번 제외)에
-넣지 않았고, 필요한 경우 `FORGE_REMOTE_MCP_TOKEN`으로 bearer token만 추가할 수 있습니다.
+`http://127.0.0.1:43128/mcp`에 엽니다. HTTP transport는 토큰 없이 시작되지 않습니다.
+예: `FORGE_REMOTE_MCP_TOKEN='충분히-긴-임의값' ./forge agent-http`. public 배포·OAuth·
+SSO는 이번 범위(9번 제외)에 넣지 않았습니다.
 
 AI가 말한 BOM 가격은 `INFERRED ESTIMATE`로만 취급합니다. Nexar/Octopart는 필수 연결이
 아니며 catalog에서 제거했습니다. RELEASE 원가 gate에는 DigiKey/Mouser 같은 공급처

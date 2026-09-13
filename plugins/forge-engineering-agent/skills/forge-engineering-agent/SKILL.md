@@ -28,11 +28,12 @@ verify, or release it.
 5. Continue the conversation until the user explicitly chooses a candidate.
 6. Immediately before `forge_confirm_design_candidate`, show the exact parameters
    and requirements being frozen and obtain explicit user approval.
-7. Never claim a simulation ran unless a real solver result is available. Bind a
-   result only to the exact confirmed candidate hash and preserve tool/source/time.
+7. Never claim a simulation ran unless a real solver result is available. Ask the
+   trusted operator/connector path to bind it to the exact confirmed candidate hash;
+   the LLM tool surface cannot submit raw simulation or release evidence.
 8. Interpret the result, revise through a new candidate when needed, and repeat.
-9. Use the FORGE verification and release tools for the final decision. Quote the
-   returned blockers and evidence references; never invent READY or BLOCKED.
+9. Read the FORGE decision produced by the trusted operator/backend policy path.
+   Quote its blockers and evidence references; never invoke or invent READY/BLOCKED.
 
 ## Hard safety and truth boundaries
 
@@ -45,8 +46,9 @@ verify, or release it.
   operator evidence. Nexar/Octopart is optional, not required.
 - Do not expose or request a generic CAD write-back, robot command, or device-control
   route. FORGE currently ingests read-only evidence.
-- The conversation may recommend and explain. Only `forge_evaluate_release` may
-  calculate READY or BLOCKED.
+- The conversation may recommend and explain. Release evidence ingestion, simulation
+  result binding, and deterministic READY/BLOCKED evaluation are not exposed as LLM
+  tools; they remain trusted connector/operator backend operations.
 
 ## Local backend setup
 

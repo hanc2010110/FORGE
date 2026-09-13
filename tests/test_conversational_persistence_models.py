@@ -19,11 +19,17 @@ from forge_core.conversational_design import (
     build_simulation_binding,
 )
 from forge_core.conversational_persistence import (
+    DesignCandidateApprovalRequest,
     StoredDesignCandidate,
+    StoredDesignCandidateApproval,
+    StoredDesignCandidateApprovalReceipt,
     StoredDesignStateTransition,
     StoredEvidenceClaim,
     StoredSimulationBinding,
+    design_candidate_approval_hash,
+    design_candidate_approval_receipt_hash,
 )
+from forge_core.hashing import canonical_sha256
 from forge_core.models import SourceRef, Verdict
 
 NOW = datetime(2026, 9, 1, 12, tzinfo=UTC)
@@ -112,6 +118,86 @@ class ConversationalPersistenceModelTests(unittest.TestCase):
                 proposal_hash=candidate.proposal_hash,
                 candidate=tampered,
                 stored_at=NOW + timedelta(minutes=2),
+            )
+
+    def test_candidate_approval_and_receipt_bind_actor_request_and_candidate(
+        self,
+    ) -> None:
+        candidate = self.candidate()
+        request = DesignCandidateApprovalRequest(
+            project_id=PROJECT,
+            session_id=SESSION,
+            candidate_id=candidate.candidate_id,
+            revision=candidate.revision,
+            proposal_hash=candidate.proposal_hash,
+            parameters=candidate.parameters,
+            requirements=candidate.requirements,
+            confirmed_by=candidate.confirmed_by,
+        )
+        request_hash = canonical_sha256(request)
+        nonce_hash = "sha256:" + "c" * 64
+        approval_hash = design_candidate_approval_hash(
+            approval_id="approval-1",
+            project_id=PROJECT,
+            request_hash=request_hash,
+            nonce_hash=nonce_hash,
+            approved_by=candidate.confirmed_by,
+            approved_at=NOW,
+        )
+        approval = StoredDesignCandidateApproval(
+            approval_id="approval-1",
+            approval_hash=approval_hash,
+            project_id=PROJECT,
+            request_hash=request_hash,
+            nonce_hash=nonce_hash,
+            approved_by=candidate.confirmed_by,
+            request=request,
+            approved_at=NOW,
+            stored_at=NOW,
+        )
+        receipt_hash = design_candidate_approval_receipt_hash(
+            approval_id=approval.approval_id,
+            approval_hash=approval.approval_hash,
+            project_id=PROJECT,
+            request_hash=request_hash,
+            candidate_hash=candidate.candidate_hash,
+            consumed_by=candidate.confirmed_by,
+            consumed_at=NOW + timedelta(seconds=1),
+        )
+        receipt = StoredDesignCandidateApprovalReceipt(
+            receipt_hash=receipt_hash,
+            approval_id=approval.approval_id,
+            approval_hash=approval.approval_hash,
+            project_id=PROJECT,
+            request_hash=request_hash,
+            candidate_hash=candidate.candidate_hash,
+            consumed_by=candidate.confirmed_by,
+            consumed_at=NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(approval.request, request)
+        self.assertEqual(receipt.candidate_hash, candidate.candidate_hash)
+        invalid_approval_updates = (
+            {"project_id": "other-project"},
+            {"approved_by": "other-engineer"},
+            {"request_hash": HASH_A},
+            {"approval_hash": HASH_A},
+            {"stored_at": NOW - timedelta(seconds=1)},
+            {"approved_at": datetime(2026, 9, 1)},
+        )
+        for update in invalid_approval_updates:
+            with self.subTest(update=update), self.assertRaises(ValidationError):
+                StoredDesignCandidateApproval.model_validate(
+                    approval.model_dump(mode="python") | update
+                )
+        with self.assertRaises(ValidationError):
+            StoredDesignCandidateApprovalReceipt.model_validate(
+                receipt.model_dump(mode="python") | {"receipt_hash": HASH_A}
+            )
+        with self.assertRaises(ValidationError):
+            StoredDesignCandidateApprovalReceipt.model_validate(
+                receipt.model_dump(mode="python")
+                | {"consumed_at": datetime(2026, 9, 1)}
             )
 
     def test_stored_simulation_binds_candidate_and_result_hashes(self) -> None:

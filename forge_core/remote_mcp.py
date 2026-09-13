@@ -15,8 +15,8 @@ _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 class ForgeRemoteMCPTransport:
     """Bounded Streamable-HTTP-shaped MCP development transport.
 
-    This is intentionally not an auth/SSO product. It defaults to localhost and may
-    require a caller-provided bearer token for development tunnels.
+    This is intentionally not an auth/SSO product. It is localhost-only and always
+    requires a caller-provided bearer token.
     """
 
     def __init__(
@@ -24,7 +24,7 @@ class ForgeRemoteMCPTransport:
         server: ForgeMCPServer,
         *,
         path: str = DEFAULT_REMOTE_MCP_PATH,
-        bearer_token: str | None = None,
+        bearer_token: str,
         allow_non_localhost: bool = False,
         max_request_bytes: int = DEFAULT_REMOTE_MCP_MAX_REQUEST_BYTES,
     ) -> None:
@@ -35,9 +35,7 @@ class ForgeRemoteMCPTransport:
             or max_request_bytes > DEFAULT_REMOTE_MCP_MAX_REQUEST_BYTES
         ):
             raise ValueError("remote MCP request bound is invalid")
-        if bearer_token is not None and (
-            not bearer_token or "\r" in bearer_token or "\n" in bearer_token
-        ):
+        if not bearer_token or "\r" in bearer_token or "\n" in bearer_token:
             raise ValueError("remote MCP bearer token boundary is invalid")
         self._server = server
         self._path = path
@@ -77,13 +75,10 @@ class ForgeRemoteMCPTransport:
             return self._json_error(
                 413, "request_too_large", "MCP message is too large."
             )
-        if self._bearer_token is not None:
-            authorization = headers.get(
-                "authorization", headers.get("Authorization", "")
-            )
-            expected = f"Bearer {self._bearer_token}"
-            if not secrets.compare_digest(authorization, expected):
-                return self._json_error(401, "unauthorized", "Missing bearer token.")
+        authorization = headers.get("authorization", headers.get("Authorization", ""))
+        expected = f"Bearer {self._bearer_token}"
+        if not secrets.compare_digest(authorization, expected):
+            return self._json_error(401, "unauthorized", "Missing bearer token.")
         try:
             message = json.loads(body.decode("utf-8"))
         except UnicodeDecodeError, json.JSONDecodeError:

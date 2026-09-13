@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 from forge_core.conversational_design import (
     DesignCandidateSnapshot,
     DesignConversationState,
+    DesignParameter,
     DesignStateTransition,
     EvidenceClaim,
     SimulationBinding,
@@ -20,6 +21,71 @@ def _require_utc(value: datetime, field_name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError(f"{field_name} must be timezone-aware UTC")
     return value
+
+
+class _DesignCandidateApprovalHashMaterial(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    approval_id: str
+    project_id: str
+    request_hash: str
+    nonce_hash: str
+    approved_by: str
+    approved_at: datetime
+
+
+class _DesignCandidateApprovalReceiptHashMaterial(ContractModel):
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    approval_id: str
+    approval_hash: str
+    project_id: str
+    request_hash: str
+    candidate_hash: str
+    consumed_by: str
+    consumed_at: datetime
+
+
+def design_candidate_approval_hash(
+    *,
+    approval_id: str,
+    project_id: str,
+    request_hash: str,
+    nonce_hash: str,
+    approved_by: str,
+    approved_at: datetime,
+) -> str:
+    return canonical_sha256(
+        _DesignCandidateApprovalHashMaterial(
+            approval_id=approval_id,
+            project_id=project_id,
+            request_hash=request_hash,
+            nonce_hash=nonce_hash,
+            approved_by=approved_by,
+            approved_at=approved_at,
+        )
+    )
+
+
+def design_candidate_approval_receipt_hash(
+    *,
+    approval_id: str,
+    approval_hash: str,
+    project_id: str,
+    request_hash: str,
+    candidate_hash: str,
+    consumed_by: str,
+    consumed_at: datetime,
+) -> str:
+    return canonical_sha256(
+        _DesignCandidateApprovalReceiptHashMaterial(
+            approval_id=approval_id,
+            approval_hash=approval_hash,
+            project_id=project_id,
+            request_hash=request_hash,
+            candidate_hash=candidate_hash,
+            consumed_by=consumed_by,
+            consumed_at=consumed_at,
+        )
+    )
 
 
 class StoredDesignCandidate(ContractModel):
@@ -53,6 +119,98 @@ class StoredDesignCandidate(ContractModel):
             raise ValueError("stored candidate identity does not match payload")
         if self.candidate.confirmed_at > self.stored_at:
             raise ValueError("candidate cannot be stored before confirmation")
+        return self
+
+
+class DesignCandidateApprovalRequest(ContractModel):
+    """Exact candidate payload a human approved before it becomes executable."""
+
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    project_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    proposal_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    parameters: tuple[DesignParameter, ...] = Field(min_length=1)
+    requirements: tuple[str, ...] = Field(min_length=1)
+    confirmed_by: str = Field(min_length=1)
+
+
+class StoredDesignCandidateApproval(ContractModel):
+    """Trusted, single-use approval for one exact candidate request."""
+
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    approval_id: str = Field(min_length=1)
+    approval_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    project_id: str = Field(min_length=1)
+    request_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    nonce_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    approved_by: str = Field(min_length=1)
+    request: DesignCandidateApprovalRequest
+    approved_at: datetime
+    stored_at: datetime
+
+    @field_validator("approved_at", "stored_at")
+    @classmethod
+    def approval_timestamps_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "approval timestamp")
+
+    @model_validator(mode="after")
+    def approval_must_bind_exact_request_actor_and_hash(
+        self,
+    ) -> StoredDesignCandidateApproval:
+        if self.project_id != self.request.project_id:
+            raise ValueError("candidate approval project does not match request")
+        if self.approved_by != self.request.confirmed_by:
+            raise ValueError("candidate approval actor does not match request")
+        if self.request_hash != canonical_sha256(self.request):
+            raise ValueError("candidate approval request hash does not reproduce")
+        expected_approval_hash = design_candidate_approval_hash(
+            approval_id=self.approval_id,
+            project_id=self.project_id,
+            request_hash=self.request_hash,
+            nonce_hash=self.nonce_hash,
+            approved_by=self.approved_by,
+            approved_at=self.approved_at,
+        )
+        if self.approval_hash != expected_approval_hash:
+            raise ValueError("candidate approval hash does not reproduce")
+        if self.approved_at > self.stored_at:
+            raise ValueError("candidate approval cannot be stored before approval")
+        return self
+
+
+class StoredDesignCandidateApprovalReceipt(ContractModel):
+    """Immutable proof that one approval produced one candidate exactly once."""
+
+    schema_version: Literal["1.0.0"] = "1.0.0"
+    receipt_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    approval_id: str = Field(min_length=1)
+    approval_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    project_id: str = Field(min_length=1)
+    request_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    consumed_by: str = Field(min_length=1)
+    consumed_at: datetime
+
+    @field_validator("consumed_at")
+    @classmethod
+    def consumed_timestamp_must_be_utc(cls, value: datetime) -> datetime:
+        return _require_utc(value, "consumed_at")
+
+    @model_validator(mode="after")
+    def receipt_hash_must_reproduce(self) -> StoredDesignCandidateApprovalReceipt:
+        expected = design_candidate_approval_receipt_hash(
+            approval_id=self.approval_id,
+            approval_hash=self.approval_hash,
+            project_id=self.project_id,
+            request_hash=self.request_hash,
+            candidate_hash=self.candidate_hash,
+            consumed_by=self.consumed_by,
+            consumed_at=self.consumed_at,
+        )
+        if self.receipt_hash != expected:
+            raise ValueError("candidate approval receipt hash does not reproduce")
         return self
 
 
@@ -160,8 +318,13 @@ class StoredDesignStateTransition(ContractModel):
 
 
 __all__ = [
+    "DesignCandidateApprovalRequest",
     "StoredDesignCandidate",
+    "StoredDesignCandidateApproval",
+    "StoredDesignCandidateApprovalReceipt",
     "StoredDesignStateTransition",
     "StoredEvidenceClaim",
     "StoredSimulationBinding",
+    "design_candidate_approval_hash",
+    "design_candidate_approval_receipt_hash",
 ]

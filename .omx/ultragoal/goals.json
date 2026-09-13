@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-08-27T12:28:53.182Z",
-  "updatedAt": "2026-09-09T12:03:14.226Z",
+  "updatedAt": "2026-09-13T12:31:35.751Z",
   "briefPath": ".omx/ultragoal/brief.md",
   "goalsPath": ".omx/ultragoal/goals.json",
   "ledgerPath": ".omx/ultragoal/ledger.jsonl",
@@ -364,64 +364,74 @@
       "id": "G028-llm-host-and-remote-agent-transport",
       "title": "LLM host and remote agent transport",
       "objective": "Implement an OpenAI-compatible hosted Responses/embeddings client, semantic cited retrieval, and a bounded remote MCP HTTP development transport without implementing login/SSO.",
-      "status": "in_progress",
+      "status": "complete",
       "attempt": 1,
       "createdAt": "2026-09-09T12:03:07.469Z",
-      "updatedAt": "2026-09-09T12:03:14.226Z",
-      "evidence": "README and current code show only local stdio MCP and deterministic local retrieval.",
-      "startedAt": "2026-09-09T12:03:14.226Z"
+      "updatedAt": "2026-09-13T12:21:47.663Z",
+      "evidence": "Implemented OpenAI-compatible hosted Responses and embeddings clients, cited semantic retrieval, bounded remote MCP HTTP transport/server, and hosted conversation orchestration without login/SSO; full ./forge verify passed 368 tests, strict mypy, Ruff, lock/pip checks, and 90.011492% coverage.",
+      "startedAt": "2026-09-09T12:03:14.226Z",
+      "completedAt": "2026-09-13T12:21:47.663Z"
     },
     {
       "id": "G029-step-and-solidworks-export-ingestion",
       "title": "STEP and SolidWorks export ingestion",
       "objective": "Implement bounded source-bound STEP metadata/geometry ingestion and a safe SolidWorks-export package path, preserving immutable hashes and read-only behavior.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-09-09T12:03:07.687Z",
-      "updatedAt": "2026-09-09T12:03:07.687Z",
-      "evidence": "Current implementation only parses STL; DESIGN lists STEP/SolidWorks parsing as missing."
+      "updatedAt": "2026-09-13T12:22:13.605Z",
+      "evidence": "Implemented bounded STEP parser with source/geometry hashes and safe SolidWorks export ZIP ingestion with manifest/path/size protections, immutable read-only asset contracts, tests and documentation; full ./forge verify passed 368 tests and 90.011492% coverage.",
+      "startedAt": "2026-09-13T12:21:51.244Z",
+      "completedAt": "2026-09-13T12:22:13.605Z"
     },
     {
       "id": "G030-live-cae-connector-framework",
       "title": "Live CAE connector framework",
       "objective": "Implement an approval-bound CAE job/result connector with at least one concrete SimScale-compatible REST adapter and deterministic tests using injected transports.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-09-09T12:03:08.067Z",
-      "updatedAt": "2026-09-09T12:03:08.067Z",
-      "evidence": "Current simulation is a fixture and the Integration Hub lists CAE providers as adapter required."
+      "updatedAt": "2026-09-13T12:22:29.228Z",
+      "evidence": "Implemented approval-bound SimScale submit/start/status/result and allowlisted MATLAB execution adapters with injected transports, durable SQLite execution ledger, exact request hashes, idempotent restart replay, tamper-visible receipts, failure-closed provider boundaries, and 12 targeted CAE tests; full ./forge verify passed.",
+      "startedAt": "2026-09-13T12:22:13.764Z",
+      "completedAt": "2026-09-13T12:22:29.228Z"
     },
     {
       "id": "G031-external-source-and-plm-read-connect",
       "title": "External source and PLM read connectors",
       "objective": "Implement credential-safe read-only adapters for GitLab/Jenkins and broadly useful CAD/PLM REST surfaces, with source/time/hash evidence envelopes and tests.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-09-09T12:03:08.286Z",
-      "updatedAt": "2026-09-09T12:03:08.286Z",
-      "evidence": "Only GitHub is live; every other catalog entry is adapter required."
+      "updatedAt": "2026-09-13T12:22:46.875Z",
+      "evidence": "Implemented credential-safe read-only GitLab, Jenkins, Onshape, Autodesk APS, Aras Innovator, and generic REST engineering adapters with allowlisted HTTPS endpoints, bounded transport, source/time/hash evidence envelopes, Integration Hub status, tests, and docs; full ./forge verify passed.",
+      "startedAt": "2026-09-13T12:22:29.386Z",
+      "completedAt": "2026-09-13T12:22:46.875Z"
     },
     {
       "id": "G032-signed-lab-and-device-evidence-edge",
       "title": "Signed lab and device evidence edge",
       "objective": "Implement a no-control signed edge evidence protocol and read-only ingestion adapters for ROS2/MQTT/OPC-UA/HIL evidence artifacts, with replay protection and tests.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-09-09T12:03:08.498Z",
-      "updatedAt": "2026-09-09T12:03:08.498Z",
-      "evidence": "Device integration currently exists only as a catalog contract."
+      "updatedAt": "2026-09-13T12:23:04.953Z",
+      "evidence": "Implemented signed no-control edge evidence envelopes and read-only ROS2, MQTT, OPC-UA, and HIL artifact ingestion with HMAC verification, timestamp/nonce replay protection, source/time/hash provenance, adapter routing, tests, and explicit no-device-control boundaries; full ./forge verify passed.",
+      "startedAt": "2026-09-13T12:22:47.036Z",
+      "completedAt": "2026-09-13T12:23:04.953Z"
     },
     {
       "id": "G033-approved-engineering-iteration-autom",
       "title": "Approved engineering iteration automation",
       "objective": "Implement an approval-gated orchestration layer for attach-plan-confirm-simulate-import-verify-revise, including automatic re-verification when new evidence is recorded, without external source writeback.",
-      "status": "pending",
-      "attempt": 0,
+      "status": "complete",
+      "attempt": 1,
       "createdAt": "2026-09-09T12:03:08.782Z",
-      "updatedAt": "2026-09-09T12:03:08.782Z",
-      "evidence": "Current diagnosis and fix plans exist but automatic re-verification and connector mediation are missing."
+      "updatedAt": "2026-09-13T12:31:35.751Z",
+      "evidence": "Implemented approval-gated attach-plan-confirm-simulate-import-verify-revise orchestration with authenticated exact candidate approval, automatic post-evidence re-verification, durable audit/failure records, no external writeback, GPT-style host UX, and restart-safe CAE execution. Final cleaner passed; ./forge verify passed 369 tests at 90.043548%; independent code review APPROVE and architecture CLEAR.",
+      "startedAt": "2026-09-13T12:23:05.111Z",
+      "completedAt": "2026-09-13T12:31:35.751Z"
     }
   ],
-  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail.",
-  "activeGoalId": "G028-llm-host-and-remote-agent-transport"
+  "codexObjective": "Complete the durable ultragoal plan in .omx/ultragoal/goals.json, including later accepted/appended stories, under the original brief constraints; use .omx/ultragoal/ledger.jsonl as the audit trail."
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 import zipfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from forge_core.cad_imports import (
@@ -119,6 +120,32 @@ class CADImportTests(unittest.TestCase):
         self.assertEqual(package.assets[0].source_name, "upper_arm.step")
         self.assertEqual(package.assets[1].source_name, "upper_arm.stl")
         self.assertEqual(package.package_sha256[:7], "sha256:")
+
+    def test_solidworks_manifest_is_deeply_immutable_and_serializable(self) -> None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                b'{"source_system":"solidworks","metadata":{"revision":"D"}}',
+            )
+            archive.writestr("upper_arm.step", STEP_FIXTURE)
+        package = import_solidworks_export_package(
+            asset_id="sw-immutable",
+            project_id="robot-arm",
+            tenant_id="local-org",
+            source_uri="file:///sw-immutable.zip",
+            source_version="rev-d",
+            captured_at=NOW,
+            content=buffer.getvalue(),
+        )
+        metadata = package.manifest["metadata"]
+        self.assertIsInstance(metadata, Mapping)
+        with self.assertRaises(TypeError):
+            metadata["revision"] = "changed"  # type: ignore[index]
+        self.assertEqual(
+            package.model_dump(mode="json")["manifest"]["metadata"]["revision"],
+            "D",
+        )
 
     def test_solidworks_package_rejects_unsafe_zip_members(self) -> None:
         with self.assertRaisesRegex(ValueError, "path traversal"):

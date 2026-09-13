@@ -25,6 +25,8 @@ from forge_core.cad_geometry import StoredCADGeometryAsset
 from forge_core.change_management import ArtifactDomain
 from forge_core.conversational_persistence import (
     StoredDesignCandidate,
+    StoredDesignCandidateApproval,
+    StoredDesignCandidateApprovalReceipt,
     StoredDesignStateTransition,
     StoredEvidenceClaim,
     StoredSimulationBinding,
@@ -75,6 +77,9 @@ from forge_core.planning_persistence import (
     StoredPlanVerification,
 )
 from forge_core.release_persistence import (
+    StoredAutomaticReverificationFailure,
+    StoredAutomaticReverificationReceipt,
+    StoredAutomaticReverificationTrigger,
     StoredChangeImpactAssessment,
     StoredConnectorSnapshot,
     StoredRawReleaseEvidence,
@@ -249,6 +254,20 @@ class AtomicProjectWrite:
         self._require_project(record.project_id)
         self._store._insert_release_evidence(self._connection, record)
 
+    def insert_automatic_reverification_trigger(
+        self, record: StoredAutomaticReverificationTrigger
+    ) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_automatic_reverification_trigger(self._connection, record)
+
+    def insert_automatic_reverification_receipt(
+        self, record: StoredAutomaticReverificationReceipt
+    ) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_automatic_reverification_receipt(self._connection, record)
+
     def append_release_decision(self, record: StoredReleaseDecision) -> None:
         self._require_active()
         self._require_project(record.project_id)
@@ -297,6 +316,24 @@ class AtomicProjectWrite:
         self._require_active()
         self._require_project(record.project_id)
         self._store._insert_design_candidate(self._connection, record)
+
+    def insert_design_candidate_approval(
+        self, record: StoredDesignCandidateApproval
+    ) -> None:
+        self._require_active()
+        self._require_project(record.project_id)
+        self._store._insert_design_candidate_approval(self._connection, record)
+
+    def consume_design_candidate_approval(
+        self,
+        candidate: StoredDesignCandidate,
+        receipt: StoredDesignCandidateApprovalReceipt,
+    ) -> None:
+        self._require_active()
+        self._require_project(candidate.project_id)
+        self._require_project(receipt.project_id)
+        self._store._insert_design_candidate(self._connection, candidate)
+        self._store._insert_design_candidate_approval_receipt(self._connection, receipt)
 
     def insert_simulation_binding(self, record: StoredSimulationBinding) -> None:
         self._require_active()
@@ -366,7 +403,7 @@ class AtomicProjectWrite:
 class SQLiteEvidenceStore:
     """Short-transaction SQLite repository for immutable FORGE evidence."""
 
-    SCHEMA_VERSION = 10
+    SCHEMA_VERSION = 13
     BUSY_TIMEOUT_MS = 100
     RETRY_DELAYS = (0.025, 0.05, 0.1)
 
@@ -699,6 +736,18 @@ class SQLiteEvidenceStore:
                     payload_json TEXT NOT NULL,
                     stored_at TEXT NOT NULL
                 );
+                CREATE TABLE design_candidate_approvals(
+                    approval_id TEXT PRIMARY KEY,
+                    approval_hash TEXT NOT NULL UNIQUE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_hash TEXT NOT NULL,
+                    nonce_hash TEXT NOT NULL,
+                    approved_by TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    approved_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
                 CREATE TABLE design_candidates(
                     candidate_hash TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL REFERENCES projects(project_id)
@@ -713,6 +762,22 @@ class SQLiteEvidenceStore:
                     stored_at TEXT NOT NULL,
                     UNIQUE(project_id, candidate_id, revision),
                     UNIQUE(project_id, candidate_hash)
+                );
+                CREATE TABLE design_candidate_approval_receipts(
+                    receipt_hash TEXT PRIMARY KEY,
+                    approval_id TEXT NOT NULL UNIQUE
+                        REFERENCES design_candidate_approvals(approval_id)
+                        ON DELETE CASCADE,
+                    approval_hash TEXT NOT NULL,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_hash TEXT NOT NULL,
+                    candidate_hash TEXT NOT NULL UNIQUE
+                        REFERENCES design_candidates(candidate_hash)
+                        ON DELETE CASCADE,
+                    consumed_by TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    consumed_at TEXT NOT NULL
                 );
                 CREATE TABLE simulation_bindings(
                     simulation_hash TEXT PRIMARY KEY,
@@ -894,6 +959,45 @@ class SQLiteEvidenceStore:
                     stored_at TEXT NOT NULL,
                     PRIMARY KEY(project_id, asset_id)
                 );
+                CREATE TABLE automatic_reverification_triggers(
+                    trigger_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    candidate_hash TEXT NOT NULL,
+                    evidence_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(project_id, candidate_hash, evidence_hash)
+                );
+                CREATE TABLE automatic_reverification_receipts(
+                    receipt_hash TEXT PRIMARY KEY,
+                    trigger_hash TEXT NOT NULL UNIQUE
+                        REFERENCES automatic_reverification_triggers(trigger_hash)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    decision_hash TEXT NOT NULL
+                        REFERENCES release_decisions(decision_hash) ON DELETE CASCADE,
+                    release_status TEXT NOT NULL
+                        CHECK(release_status IN ('READY', 'BLOCKED')),
+                    payload_json TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
+                );
+                CREATE TABLE automatic_reverification_failures(
+                    failure_hash TEXT PRIMARY KEY,
+                    trigger_hash TEXT NOT NULL
+                        REFERENCES automatic_reverification_triggers(trigger_hash)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    attempt INTEGER NOT NULL CHECK(attempt >= 1),
+                    error_code TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    failed_at TEXT NOT NULL,
+                    UNIQUE(trigger_hash, attempt)
+                );
                 CREATE TABLE idempotency_records(
                     operation TEXT NOT NULL,
                     project_id TEXT NOT NULL,
@@ -924,7 +1028,13 @@ class SQLiteEvidenceStore:
                     VALUES(9, '2026-09-03T06:00:00.000000Z');
                 INSERT INTO schema_migrations(version, applied_at)
                     VALUES(10, '2026-09-03T08:00:00.000000Z');
-                PRAGMA user_version = 10;
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(11, '2026-09-13T00:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(12, '2026-09-13T01:00:00.000000Z');
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(13, '2026-09-13T02:00:00.000000Z');
+                PRAGMA user_version = 13;
                 COMMIT;
                 """
             )
@@ -934,7 +1044,7 @@ class SQLiteEvidenceStore:
             raise MigrationError("failed to initialize SQLite schema") from exc
 
     def _migrate(self, connection: sqlite3.Connection, version: int) -> None:
-        if version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+        if version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}:
             raise MigrationError(f"no migration path from schema {version}")
         try:
             if version == 1:
@@ -1404,6 +1514,107 @@ class SQLiteEvidenceStore:
                 COMMIT;
                 """
                 )
+                version = 10
+            if version == 10:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE automatic_reverification_triggers(
+                    trigger_hash TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    analysis_hash TEXT NOT NULL
+                        REFERENCES change_assessments(analysis_hash) ON DELETE CASCADE,
+                    candidate_hash TEXT NOT NULL,
+                    evidence_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(project_id, candidate_hash, evidence_hash)
+                );
+                CREATE TABLE automatic_reverification_receipts(
+                    receipt_hash TEXT PRIMARY KEY,
+                    trigger_hash TEXT NOT NULL UNIQUE
+                        REFERENCES automatic_reverification_triggers(trigger_hash)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    decision_hash TEXT NOT NULL
+                        REFERENCES release_decisions(decision_hash) ON DELETE CASCADE,
+                    release_status TEXT NOT NULL
+                        CHECK(release_status IN ('READY', 'BLOCKED')),
+                    payload_json TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(11, '2026-09-13T00:00:00.000000Z');
+                PRAGMA user_version = 11;
+                COMMIT;
+                """
+                )
+                version = 11
+            if version == 11:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE automatic_reverification_failures(
+                    failure_hash TEXT PRIMARY KEY,
+                    trigger_hash TEXT NOT NULL
+                        REFERENCES automatic_reverification_triggers(trigger_hash)
+                        ON DELETE CASCADE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    attempt INTEGER NOT NULL CHECK(attempt >= 1),
+                    error_code TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    failed_at TEXT NOT NULL,
+                    UNIQUE(trigger_hash, attempt)
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(12, '2026-09-13T01:00:00.000000Z');
+                PRAGMA user_version = 12;
+                COMMIT;
+                """
+                )
+                version = 12
+            if version == 12:
+                connection.executescript(
+                    """
+                BEGIN IMMEDIATE;
+                CREATE TABLE design_candidate_approvals(
+                    approval_id TEXT PRIMARY KEY,
+                    approval_hash TEXT NOT NULL UNIQUE,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_hash TEXT NOT NULL,
+                    nonce_hash TEXT NOT NULL,
+                    approved_by TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    approved_at TEXT NOT NULL,
+                    stored_at TEXT NOT NULL
+                );
+                CREATE TABLE design_candidate_approval_receipts(
+                    receipt_hash TEXT PRIMARY KEY,
+                    approval_id TEXT NOT NULL UNIQUE
+                        REFERENCES design_candidate_approvals(approval_id)
+                        ON DELETE CASCADE,
+                    approval_hash TEXT NOT NULL,
+                    project_id TEXT NOT NULL REFERENCES projects(project_id)
+                        ON DELETE CASCADE,
+                    request_hash TEXT NOT NULL,
+                    candidate_hash TEXT NOT NULL UNIQUE
+                        REFERENCES design_candidates(candidate_hash)
+                        ON DELETE CASCADE,
+                    consumed_by TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    consumed_at TEXT NOT NULL
+                );
+                INSERT INTO schema_migrations(version, applied_at)
+                    VALUES(13, '2026-09-13T02:00:00.000000Z');
+                PRAGMA user_version = 13;
+                COMMIT;
+                """
+                )
+                version = 13
         except (sqlite3.Error, ValidationError, ValueError) as exc:
             with suppress(sqlite3.Error):
                 connection.rollback()
@@ -3179,6 +3390,130 @@ class SQLiteEvidenceStore:
             lambda connection: self._insert_design_candidate(connection, record),
         )
 
+    def store_design_candidate_approval(
+        self,
+        record: StoredDesignCandidateApproval,
+        *,
+        expected_project_version: int,
+    ) -> int:
+        return self._project_write(
+            record.project_id,
+            expected_project_version,
+            record.stored_at,
+            lambda connection: self._insert_design_candidate_approval(
+                connection, record
+            ),
+        )
+
+    def _insert_design_candidate_approval(
+        self,
+        connection: sqlite3.Connection,
+        record: StoredDesignCandidateApproval,
+    ) -> None:
+        record = StoredDesignCandidateApproval.model_validate(
+            record.model_dump(mode="python")
+        )
+        proposal_row = connection.execute(
+            "SELECT project_id FROM design_proposals WHERE proposal_hash = ?",
+            (record.request.proposal_hash,),
+        ).fetchone()
+        if proposal_row is None:
+            raise RecordNotFoundError("design candidate approval proposal not found")
+        if str(proposal_row["project_id"]) != record.project_id:
+            raise IntegrityConflictError(
+                "design candidate approval proposal belongs to another project"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO design_candidate_approvals VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.approval_id,
+                record.approval_hash,
+                record.project_id,
+                record.request_hash,
+                record.nonce_hash,
+                record.approved_by,
+                _canonical_model(record),
+                _utc_text(record.approved_at),
+                _utc_text(record.stored_at),
+            ),
+        )
+
+    def get_design_candidate_approval(
+        self, approval_id: str
+    ) -> StoredDesignCandidateApproval:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM design_candidate_approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("design candidate approval not found")
+        return self._design_candidate_approval_from_row(row)
+
+    def get_design_candidate_approval_receipt(
+        self, approval_id: str
+    ) -> StoredDesignCandidateApprovalReceipt:
+        with self._reading() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM design_candidate_approval_receipts
+                WHERE approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("design candidate approval receipt not found")
+        return self._design_candidate_approval_receipt_from_row(row)
+
+    def _insert_design_candidate_approval_receipt(
+        self,
+        connection: sqlite3.Connection,
+        receipt: StoredDesignCandidateApprovalReceipt,
+    ) -> None:
+        receipt = StoredDesignCandidateApprovalReceipt.model_validate(
+            receipt.model_dump(mode="python")
+        )
+        approval_row = connection.execute(
+            "SELECT * FROM design_candidate_approvals WHERE approval_id = ?",
+            (receipt.approval_id,),
+        ).fetchone()
+        if approval_row is None:
+            raise RecordNotFoundError("design candidate approval not found")
+        approval = self._design_candidate_approval_from_row(approval_row)
+        candidate_row = connection.execute(
+            "SELECT project_id FROM design_candidates WHERE candidate_hash = ?",
+            (receipt.candidate_hash,),
+        ).fetchone()
+        if candidate_row is None:
+            raise RecordNotFoundError("approved design candidate not found")
+        if (
+            approval.project_id != receipt.project_id
+            or approval.approval_hash != receipt.approval_hash
+            or approval.request_hash != receipt.request_hash
+            or approval.approved_by != receipt.consumed_by
+            or str(candidate_row["project_id"]) != receipt.project_id
+        ):
+            raise IntegrityConflictError(
+                "design candidate approval receipt bindings do not match"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO design_candidate_approval_receipts "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                receipt.receipt_hash,
+                receipt.approval_id,
+                receipt.approval_hash,
+                receipt.project_id,
+                receipt.request_hash,
+                receipt.candidate_hash,
+                receipt.consumed_by,
+                _canonical_model(receipt),
+                _utc_text(receipt.consumed_at),
+            ),
+        )
+
     def _insert_design_candidate(
         self, connection: sqlite3.Connection, record: StoredDesignCandidate
     ) -> None:
@@ -3750,6 +4085,242 @@ class SQLiteEvidenceStore:
                     (project_id, analysis_hash),
                 ).fetchall()
         return tuple(self._release_evidence_from_row(row) for row in rows)
+
+    def _insert_automatic_reverification_trigger(
+        self,
+        connection: sqlite3.Connection,
+        record: StoredAutomaticReverificationTrigger,
+    ) -> None:
+        record = StoredAutomaticReverificationTrigger.model_validate(
+            record.model_dump(mode="python")
+        )
+        evidence_row = connection.execute(
+            """
+            SELECT * FROM release_evidence
+            WHERE project_id = ? AND evidence_hash = ?
+              AND change_analysis_hash = ?
+            """,
+            (record.project_id, record.evidence_hash, record.analysis_hash),
+        ).fetchone()
+        if evidence_row is None:
+            raise RecordNotFoundError(
+                "automatic reverification trigger evidence not found"
+            )
+        candidate_row = connection.execute(
+            "SELECT * FROM design_candidates WHERE candidate_hash = ?",
+            (record.candidate_hash,),
+        ).fetchone()
+        if candidate_row is None:
+            raise RecordNotFoundError(
+                "automatic reverification trigger candidate not found"
+            )
+        candidate = self._design_candidate_from_row(candidate_row)
+        proposal_row = connection.execute(
+            "SELECT * FROM design_proposals WHERE proposal_hash = ?",
+            (candidate.proposal_hash,),
+        ).fetchone()
+        verification_row = connection.execute(
+            "SELECT * FROM plan_verifications WHERE verification_hash = ?",
+            (record.plan_verification_hash,),
+        ).fetchone()
+        if proposal_row is None or verification_row is None:
+            raise RecordNotFoundError(
+                "automatic reverification trigger design lineage not found"
+            )
+        proposal = self._design_proposal_from_row(proposal_row)
+        verification = self._plan_verification_from_row(verification_row)
+        if (
+            candidate.project_id != record.project_id
+            or proposal.project_id != record.project_id
+            or verification.project_id != record.project_id
+            or proposal.preview_hash != record.preview_hash
+            or verification.preview_hash != record.preview_hash
+            or verification.actual_change_analysis_hash != record.analysis_hash
+            or not verification.verification.matches_plan
+        ):
+            raise IntegrityConflictError(
+                "automatic reverification trigger does not bind verified design lineage"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO automatic_reverification_triggers VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.trigger_hash,
+                record.project_id,
+                record.analysis_hash,
+                record.candidate_hash,
+                record.evidence_hash,
+                _canonical_model(record),
+                _utc_text(record.created_at),
+            ),
+        )
+
+    def get_automatic_reverification_trigger(
+        self, trigger_hash: str
+    ) -> StoredAutomaticReverificationTrigger:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM automatic_reverification_triggers "
+                "WHERE trigger_hash = ?",
+                (trigger_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("automatic reverification trigger not found")
+        return self._automatic_reverification_trigger_from_row(row)
+
+    def list_pending_automatic_reverification_triggers(
+        self, project_id: str | None = None
+    ) -> tuple[StoredAutomaticReverificationTrigger, ...]:
+        with self._reading() as connection:
+            if project_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT trigger.*
+                    FROM automatic_reverification_triggers AS trigger
+                    LEFT JOIN automatic_reverification_receipts AS receipt
+                      ON receipt.trigger_hash = trigger.trigger_hash
+                    WHERE receipt.trigger_hash IS NULL
+                    ORDER BY trigger.created_at, trigger.trigger_hash
+                    """
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT trigger.*
+                    FROM automatic_reverification_triggers AS trigger
+                    LEFT JOIN automatic_reverification_receipts AS receipt
+                      ON receipt.trigger_hash = trigger.trigger_hash
+                    WHERE trigger.project_id = ? AND receipt.trigger_hash IS NULL
+                    ORDER BY trigger.created_at, trigger.trigger_hash
+                    """,
+                    (project_id,),
+                ).fetchall()
+        return tuple(
+            self._automatic_reverification_trigger_from_row(row) for row in rows
+        )
+
+    def _insert_automatic_reverification_receipt(
+        self,
+        connection: sqlite3.Connection,
+        record: StoredAutomaticReverificationReceipt,
+    ) -> None:
+        record = StoredAutomaticReverificationReceipt.model_validate(
+            record.model_dump(mode="python")
+        )
+        trigger_row = connection.execute(
+            "SELECT * FROM automatic_reverification_triggers WHERE trigger_hash = ?",
+            (record.trigger_hash,),
+        ).fetchone()
+        if trigger_row is None:
+            raise RecordNotFoundError(
+                "automatic reverification receipt trigger not found"
+            )
+        trigger = self._automatic_reverification_trigger_from_row(trigger_row)
+        decision_row = connection.execute(
+            "SELECT * FROM release_decisions WHERE decision_hash = ?",
+            (record.decision_hash,),
+        ).fetchone()
+        if decision_row is None:
+            raise RecordNotFoundError(
+                "automatic reverification receipt decision not found"
+            )
+        decision = self._release_decision_from_row(decision_row)
+        if (
+            trigger.project_id != record.project_id
+            or decision.project_id != record.project_id
+            or decision.decision.report.change_analysis_hash != trigger.analysis_hash
+            or record.analysis_hash != trigger.analysis_hash
+            or record.candidate_hash != trigger.candidate_hash
+            or record.preview_hash != trigger.preview_hash
+            or record.plan_verification_hash != trigger.plan_verification_hash
+            or decision.decision.report.status.value.upper() != record.release_status
+        ):
+            raise IntegrityConflictError(
+                "automatic reverification receipt does not bind trigger and decision"
+            )
+        self._insert_immutable(
+            connection,
+            "INSERT INTO automatic_reverification_receipts VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.receipt_hash,
+                record.trigger_hash,
+                record.project_id,
+                record.decision_hash,
+                record.release_status,
+                _canonical_model(record),
+                _utc_text(record.completed_at),
+            ),
+        )
+
+    def get_automatic_reverification_receipt(
+        self, trigger_hash: str
+    ) -> StoredAutomaticReverificationReceipt:
+        with self._reading() as connection:
+            row = connection.execute(
+                "SELECT * FROM automatic_reverification_receipts "
+                "WHERE trigger_hash = ?",
+                (trigger_hash,),
+            ).fetchone()
+        if row is None:
+            raise RecordNotFoundError("automatic reverification receipt not found")
+        return self._automatic_reverification_receipt_from_row(row)
+
+    def append_automatic_reverification_failure(
+        self, record: StoredAutomaticReverificationFailure
+    ) -> None:
+        record = StoredAutomaticReverificationFailure.model_validate(
+            record.model_dump(mode="python")
+        )
+
+        def insert(connection: sqlite3.Connection) -> None:
+            trigger_row = connection.execute(
+                "SELECT project_id FROM automatic_reverification_triggers "
+                "WHERE trigger_hash = ?",
+                (record.trigger_hash,),
+            ).fetchone()
+            if trigger_row is None:
+                raise RecordNotFoundError(
+                    "automatic reverification failure trigger not found"
+                )
+            if trigger_row["project_id"] != record.project_id:
+                raise IntegrityConflictError(
+                    "automatic reverification failure belongs to another project"
+                )
+            self._insert_immutable(
+                connection,
+                "INSERT INTO automatic_reverification_failures "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.failure_hash,
+                    record.trigger_hash,
+                    record.project_id,
+                    record.attempt,
+                    record.error_code,
+                    _canonical_model(record),
+                    _utc_text(record.failed_at),
+                ),
+            )
+
+        self._write(insert)
+
+    def list_automatic_reverification_failures(
+        self, project_id: str | None = None
+    ) -> tuple[StoredAutomaticReverificationFailure, ...]:
+        with self._reading() as connection:
+            if project_id is None:
+                rows = connection.execute(
+                    "SELECT * FROM automatic_reverification_failures "
+                    "ORDER BY failed_at, trigger_hash, attempt"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM automatic_reverification_failures "
+                    "WHERE project_id = ? ORDER BY failed_at, trigger_hash, attempt",
+                    (project_id,),
+                ).fetchall()
+        return tuple(
+            self._automatic_reverification_failure_from_row(row) for row in rows
+        )
 
     def append_release_decision(
         self, record: StoredReleaseDecision, *, expected_project_version: int
@@ -4364,6 +4935,26 @@ class SQLiteEvidenceStore:
             self._add_table_entries(
                 entries,
                 connection,
+                self._design_candidate_approval_from_row,
+                "SELECT * FROM design_candidate_approvals "
+                "WHERE project_id = ? ORDER BY approved_at, approval_id",
+                project_id,
+                lambda row: f"design-candidate-approvals/{row['approval_hash']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._design_candidate_approval_receipt_from_row,
+                "SELECT * FROM design_candidate_approval_receipts "
+                "WHERE project_id = ? ORDER BY consumed_at, receipt_hash",
+                project_id,
+                lambda row: (
+                    f"design-candidate-approval-receipts/{row['receipt_hash']}.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
                 self._simulation_binding_from_row,
                 "SELECT * FROM simulation_bindings "
                 "WHERE project_id = ? ORDER BY created_at, simulation_hash",
@@ -4426,6 +5017,39 @@ class SQLiteEvidenceStore:
                 "WHERE project_id = ? ORDER BY sequence",
                 project_id,
                 lambda row: f"release-decisions/{row['sequence']}.json",
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._automatic_reverification_trigger_from_row,
+                "SELECT * FROM automatic_reverification_triggers "
+                "WHERE project_id = ? ORDER BY created_at, trigger_hash",
+                project_id,
+                lambda row: (
+                    f"automatic-reverification/triggers/{row['trigger_hash']}.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._automatic_reverification_receipt_from_row,
+                "SELECT * FROM automatic_reverification_receipts "
+                "WHERE project_id = ? ORDER BY completed_at, receipt_hash",
+                project_id,
+                lambda row: (
+                    f"automatic-reverification/receipts/{row['receipt_hash']}.json"
+                ),
+            )
+            self._add_table_entries(
+                entries,
+                connection,
+                self._automatic_reverification_failure_from_row,
+                "SELECT * FROM automatic_reverification_failures "
+                "WHERE project_id = ? ORDER BY failed_at, trigger_hash, attempt",
+                project_id,
+                lambda row: (
+                    f"automatic-reverification/failures/{row['failure_hash']}.json"
+                ),
             )
             self._add_table_entries(
                 entries,
@@ -4973,6 +5597,40 @@ class SQLiteEvidenceStore:
         )
         return value
 
+    def _design_candidate_approval_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredDesignCandidateApproval:
+        value = self._decode(StoredDesignCandidateApproval, row["payload_json"])
+        self._require_binding(
+            row["approval_id"] == value.approval_id
+            and row["approval_hash"] == value.approval_hash
+            and row["project_id"] == value.project_id
+            and row["request_hash"] == value.request_hash
+            and row["nonce_hash"] == value.nonce_hash
+            and row["approved_by"] == value.approved_by
+            and row["approved_at"] == _utc_text(value.approved_at)
+            and row["stored_at"] == _utc_text(value.stored_at),
+            "design candidate approval row does not match its payload",
+        )
+        return value
+
+    def _design_candidate_approval_receipt_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredDesignCandidateApprovalReceipt:
+        value = self._decode(StoredDesignCandidateApprovalReceipt, row["payload_json"])
+        self._require_binding(
+            row["receipt_hash"] == value.receipt_hash
+            and row["approval_id"] == value.approval_id
+            and row["approval_hash"] == value.approval_hash
+            and row["project_id"] == value.project_id
+            and row["request_hash"] == value.request_hash
+            and row["candidate_hash"] == value.candidate_hash
+            and row["consumed_by"] == value.consumed_by
+            and row["consumed_at"] == _utc_text(value.consumed_at),
+            "design candidate approval receipt row does not match its payload",
+        )
+        return value
+
     def _simulation_binding_from_row(self, row: sqlite3.Row) -> StoredSimulationBinding:
         value = self._decode(StoredSimulationBinding, row["payload_json"])
         self._require_binding(
@@ -5061,6 +5719,51 @@ class SQLiteEvidenceStore:
             and row["occurred_at"] == _utc_text(occurred_at)
             and row["stored_at"] == _utc_text(value.stored_at),
             "release evidence row does not match its payload",
+        )
+        return value
+
+    def _automatic_reverification_trigger_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredAutomaticReverificationTrigger:
+        value = self._decode(StoredAutomaticReverificationTrigger, row["payload_json"])
+        self._require_binding(
+            row["trigger_hash"] == value.trigger_hash
+            and row["project_id"] == value.project_id
+            and row["analysis_hash"] == value.analysis_hash
+            and row["candidate_hash"] == value.candidate_hash
+            and row["evidence_hash"] == value.evidence_hash
+            and row["created_at"] == _utc_text(value.created_at),
+            "automatic reverification trigger row does not match its payload",
+        )
+        return value
+
+    def _automatic_reverification_receipt_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredAutomaticReverificationReceipt:
+        value = self._decode(StoredAutomaticReverificationReceipt, row["payload_json"])
+        self._require_binding(
+            row["receipt_hash"] == value.receipt_hash
+            and row["trigger_hash"] == value.trigger_hash
+            and row["project_id"] == value.project_id
+            and row["decision_hash"] == value.decision_hash
+            and row["release_status"] == value.release_status
+            and row["completed_at"] == _utc_text(value.completed_at),
+            "automatic reverification receipt row does not match its payload",
+        )
+        return value
+
+    def _automatic_reverification_failure_from_row(
+        self, row: sqlite3.Row
+    ) -> StoredAutomaticReverificationFailure:
+        value = self._decode(StoredAutomaticReverificationFailure, row["payload_json"])
+        self._require_binding(
+            row["failure_hash"] == value.failure_hash
+            and row["trigger_hash"] == value.trigger_hash
+            and row["project_id"] == value.project_id
+            and int(row["attempt"]) == value.attempt
+            and row["error_code"] == value.error_code
+            and row["failed_at"] == _utc_text(value.failed_at),
+            "automatic reverification failure row does not match its payload",
         )
         return value
 

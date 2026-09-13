@@ -1205,7 +1205,9 @@ async function persistGuidedCandidateAndSimulation(revision) {
     }
     const candidateId = revision === 1 ? "DC-014" : "DC-015";
     if (ledger.candidateRevision !== revision) {
-      const candidateData = await persistGuidedMutation("design-candidates", {
+      const approvalId = `candidate-approval-${Date.now()}`;
+      const approvalNonce = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+      const candidatePayload = {
         session_id: ledger.sessionId,
         candidate_id: candidateId,
         revision,
@@ -1216,6 +1218,16 @@ async function persistGuidedCandidateAndSimulation(revision) {
           { name: "mass_limit", current_value: "baseline", proposed_value: `+${guidedState.massLimit}%`, source_refs: ["user:mass-constraint"] },
         ],
         requirements: ["maximum deflection <= 3 mm", "payload 5 kg", "preserve top speed"],
+      };
+      await persistGuidedMutation("design-candidate-approvals", {
+        approval_id: approvalId,
+        approval_nonce: approvalNonce,
+        ...candidatePayload,
+      });
+      const candidateData = await persistGuidedMutation("design-candidates", {
+        approval_id: approvalId,
+        approval_nonce: approvalNonce,
+        ...candidatePayload,
         confirmed_by: "local-operator",
       });
       ledger.candidateHash = candidateData.design_candidate.candidate_hash;
@@ -1659,7 +1671,8 @@ function renderIntegrationCatalog(entries) {
     catalog.append(card);
   }
   const connected = integrationCatalogEntries.filter((entry) => ["connected", "local_available"].includes(entry.connection_state)).length;
-  byId("integration-catalog-count").textContent = `${connected} / ${integrationCatalogEntries.length} available`;
+  const drivers = integrationCatalogEntries.filter((entry) => entry.connection_state === "driver_available").length;
+  byId("integration-catalog-count").textContent = `${connected} connected/local · ${drivers} drivers`;
 }
 
 function setIntegrationFilter(filter) {

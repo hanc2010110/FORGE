@@ -39,6 +39,7 @@ from forge_core.persistence import (
 from forge_core.release_service import (
     AnalyzeChangeCommand,
     AppendDesignTransitionCommand,
+    ApproveDesignCandidateCommand,
     BindDesignSimulationCommand,
     CaptureSnapshotCommand,
     ConfirmDesignCandidateCommand,
@@ -140,6 +141,9 @@ _DESIGN_PROPOSAL_ITEM_ROUTE = re.compile(
 )
 _DESIGN_CANDIDATE_ROUTE = re.compile(
     rf"^/api/v1/projects/(?P<project>{_SAFE_SEGMENT})/design-candidates$"
+)
+_DESIGN_CANDIDATE_APPROVAL_ROUTE = re.compile(
+    rf"^/api/v1/projects/(?P<project>{_SAFE_SEGMENT})/design-candidate-approvals$"
 )
 _DESIGN_CANDIDATE_ITEM_ROUTE = re.compile(
     rf"^/api/v1/projects/(?P<project>{_SAFE_SEGMENT})/design-candidates/"
@@ -505,6 +509,7 @@ class LoopbackAPI:
             ("plan_verification_item", _PLAN_VERIFICATION_ITEM_ROUTE),
             ("design_proposal_collection", _DESIGN_PROPOSAL_ROUTE),
             ("design_proposal_item", _DESIGN_PROPOSAL_ITEM_ROUTE),
+            ("design_candidate_approval_collection", _DESIGN_CANDIDATE_APPROVAL_ROUTE),
             ("design_candidate_collection", _DESIGN_CANDIDATE_ROUTE),
             ("design_candidate_item", _DESIGN_CANDIDATE_ITEM_ROUTE),
             ("design_simulation_collection", _DESIGN_SIMULATION_ROUTE),
@@ -810,6 +815,12 @@ class LoopbackAPI:
             context = self._mutation_context(headers, project_id)
             result = self._service.create_design_proposal(
                 project_id, design_command, context
+            )
+        elif route == "design_candidate_approval_collection":
+            approval_command = ApproveDesignCandidateCommand.model_validate(payload)
+            context = self._mutation_context(headers, project_id)
+            result = self._service.approve_design_candidate(
+                project_id, approval_command, context
             )
         elif route == "design_candidate_collection":
             candidate_command = ConfirmDesignCandidateCommand.model_validate(payload)

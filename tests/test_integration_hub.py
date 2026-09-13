@@ -94,11 +94,13 @@ class IntegrationHubTests(unittest.TestCase):
                 "simscale",
                 "matlab_simulink",
                 "openai_hosted",
+                "hil_agent",
             }
         ]
         self.assertTrue(
             all(
-                item["connection_state"] == "not_connected" for item in credential_ready
+                item["connection_state"] == "driver_available"
+                for item in credential_ready
             )
         )
         unimplemented = [
@@ -112,7 +114,19 @@ class IntegrationHubTests(unittest.TestCase):
                 item["connection_state"] == "adapter_required" for item in unimplemented
             )
         )
-        self.assertTrue(all(item["provider"]["read_only"] for item in catalog))
+        approved_execution = {
+            item["provider"]["provider_id"]
+            for item in catalog
+            if item["provider"]["access_mode"] == "approved_execution"
+        }
+        self.assertEqual(approved_execution, {"simscale", "matlab_simulink"})
+        self.assertTrue(
+            all(
+                item["provider"]["read_only"]
+                == (item["provider"]["access_mode"] == "read_only")
+                for item in catalog
+            )
+        )
 
     def test_status_errors_are_isolated_and_unknown_drivers_are_rejected(self) -> None:
         catalog = cast(

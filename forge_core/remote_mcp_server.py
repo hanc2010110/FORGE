@@ -21,7 +21,7 @@ def create_remote_mcp_server(
     *,
     host: str = "127.0.0.1",
     port: int = DEFAULT_REMOTE_MCP_PORT,
-    bearer_token: str | None = None,
+    bearer_token: str,
 ) -> tuple[ThreadingHTTPServer, Any]:
     _validate_host(host)
     _validate_port(port)
@@ -98,6 +98,8 @@ def main() -> None:
     database_path = Path(os.environ.get("FORGE_DATABASE_PATH", "forge.db")).resolve()
     port = _parse_port(os.environ.get("FORGE_REMOTE_MCP_PORT"))
     token = os.environ.get("FORGE_REMOTE_MCP_TOKEN")
+    if token is None:
+        raise ValueError("FORGE_REMOTE_MCP_TOKEN is required for HTTP MCP")
     httpd, store = create_remote_mcp_server(
         database_path, port=port, bearer_token=token
     )
@@ -115,8 +117,7 @@ def main() -> None:
         pass
     finally:
         httpd.server_close()
-        close = store.close
-        close()
+        store.close()
 
 
 def _validate_host(host: str) -> None:

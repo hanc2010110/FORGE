@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import re
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, timedelta
-from typing import Literal
+from datetime import datetime, timedelta
+from typing import Literal, cast
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from forge_core.hashing import canonical_sha256
+from forge_core.immutable_json import freeze_json_mapping, thaw_json
 from forge_core.models import ContractModel
 
 EvidenceRunnerTier = Literal["simulation", "bench", "hil", "physical_device"]
 EvidenceOutputKind = Literal["json", "text"]
-SignatureVerifier = Callable[[bytes, str], bool]
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SAFE_EXECUTABLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
 _ZERO_HASH = "sha256:" + "0" * 64
@@ -101,6 +100,21 @@ class EvidenceRunResult(ContractModel):
     completed_at: datetime
     result_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
+    @field_validator("interpreted_payload", mode="after")
+    @classmethod
+    def freeze_interpreted_payload(
+        cls, value: Mapping[str, object] | None
+    ) -> Mapping[str, object] | None:
+        return None if value is None else freeze_json_mapping(value)
+
+    @field_serializer("interpreted_payload")
+    def serialize_interpreted_payload(
+        self, value: Mapping[str, object] | None
+    ) -> dict[str, object] | None:
+        if value is None:
+            return None
+        return cast(dict[str, object], thaw_json(value))
+
     @field_validator("completed_at")
     @classmethod
     def completed_at_must_be_utc(cls, value: datetime) -> datetime:
@@ -113,132 +127,6 @@ class EvidenceRunResult(ContractModel):
         ):
             raise ValueError("evidence run result hash does not match payload")
         return self
-
-
-class EdgeEvidenceEnvelope(ContractModel):
-    schema_version: str = "1.0.0"
-    device_id: str = Field(min_length=1)
-    tier: EvidenceRunnerTier
-    sequence: int = Field(ge=1)
-    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    scenario_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    payload: Mapping[str, object]
-    captured_at: datetime
-    signature: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    allows_device_control: Literal[False] = False
-    payload_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-
-    @field_validator("device_id")
-    @classmethod
-    def device_id_must_be_safe(cls, value: str) -> str:
-        if _SAFE_ID.fullmatch(value) is None:
-            raise ValueError("edge evidence device id must be safe")
-        return value
-
-    @field_validator("captured_at")
-    @classmethod
-    def captured_at_must_be_utc(cls, value: datetime) -> datetime:
-        return _utc(value, "captured_at")
-
-    @model_validator(mode="after")
-    def payload_hash_must_match(self) -> EdgeEvidenceEnvelope:
-        if self.payload_hash != _canonical_mapping_sha(self.payload):
-            raise ValueError("edge evidence payload hash does not match payload")
-        return self
-
-
-class VerifiedEdgeEvidence(ContractModel):
-    schema_version: str = "1.0.0"
-    envelope: EdgeEvidenceEnvelope
-    device_id: str
-    tier: EvidenceRunnerTier
-    sequence: int
-    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    scenario_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    payload_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    verified_at: datetime
-    allows_device_control: Literal[False] = False
-
-    @field_validator("verified_at")
-    @classmethod
-    def verified_at_must_be_utc(cls, value: datetime) -> datetime:
-        return _utc(value, "verified_at")
-
-
-class EdgeEvidenceVerifier:
-    def __init__(
-        self,
-        *,
-        verifier: SignatureVerifier,
-        clock: Callable[[], datetime] | None = None,
-    ) -> None:
-        self._verifier = verifier
-        self._clock = clock or (lambda: datetime.now(tz=UTC))
-        self._latest_sequence: dict[str, int] = {}
-
-    def verify(self, envelope: EdgeEvidenceEnvelope) -> VerifiedEdgeEvidence:
-        message = edge_evidence_signing_message(envelope)
-        if not self._verifier(message, envelope.signature):
-            raise ValueError("edge evidence signature verification failed")
-        latest = self._latest_sequence.get(envelope.device_id, 0)
-        if envelope.sequence <= latest:
-            raise ValueError("edge evidence replay detected")
-        self._latest_sequence[envelope.device_id] = envelope.sequence
-        verified_at = self._clock()
-        if verified_at.tzinfo is None:
-            verified_at = envelope.captured_at
-        return VerifiedEdgeEvidence(
-            envelope=envelope,
-            device_id=envelope.device_id,
-            tier=envelope.tier,
-            sequence=envelope.sequence,
-            candidate_hash=envelope.candidate_hash,
-            scenario_hash=envelope.scenario_hash,
-            payload_hash=envelope.payload_hash,
-            verified_at=_utc(verified_at, "verified_at"),
-        )
-
-
-def edge_evidence_signing_message(envelope: EdgeEvidenceEnvelope) -> bytes:
-    payload = envelope.model_copy(update={"signature": _ZERO_HASH}).model_dump(
-        mode="json"
-    )
-    return json.dumps(
-        payload, allow_nan=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
-
-
-def sign_edge_evidence_hmac(
-    *,
-    device_id: str,
-    tier: EvidenceRunnerTier,
-    sequence: int,
-    candidate_hash: str,
-    scenario_hash: str,
-    payload: Mapping[str, object],
-    captured_at: datetime,
-    shared_secret: bytes,
-) -> EdgeEvidenceEnvelope:
-    if not shared_secret:
-        raise ValueError("edge evidence shared secret is required")
-    draft = EdgeEvidenceEnvelope(
-        device_id=device_id,
-        tier=tier,
-        sequence=sequence,
-        candidate_hash=candidate_hash,
-        scenario_hash=scenario_hash,
-        payload=payload,
-        captured_at=captured_at,
-        signature=_ZERO_HASH,
-        payload_hash=_canonical_mapping_sha(payload),
-    )
-    signature = (
-        "sha256:"
-        + hmac.new(
-            shared_secret, edge_evidence_signing_message(draft), hashlib.sha256
-        ).hexdigest()
-    )
-    return draft.model_copy(update={"signature": signature})
 
 
 class CommandEvidenceRunner:
@@ -307,13 +195,8 @@ def _interpret(kind: EvidenceOutputKind, stdout: bytes) -> Mapping[str, object] 
 
 __all__ = [
     "CommandEvidenceRunner",
-    "EdgeEvidenceEnvelope",
-    "EdgeEvidenceVerifier",
     "EvidenceRunRequest",
     "EvidenceRunResult",
     "EvidenceRunnerTier",
     "RegisteredEvidenceCommand",
-    "VerifiedEdgeEvidence",
-    "edge_evidence_signing_message",
-    "sign_edge_evidence_hmac",
 ]

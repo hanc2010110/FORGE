@@ -34,8 +34,16 @@ Provider마다 인증·응답 계약이 다르므로 연결 API는 provider 전�
 
 ## 구현 상태
 
-- `local_artifacts`: 로컬 CAD·문서·시험 결과 입력 사용 가능. ASCII/binary STL은
-  3D mesh로, STEP은 schema/product/unit/point-bounds metadata summary로 파싱
+상태의 의미는 엄격히 구분한다. `Connected`는 실제 credential 시험과 status provider가
+동작하는 연결, `Available locally`는 외부 credential 없이 로컬에서 실행 가능한 기능,
+`Driver available`은 검증된 client 계약과 immutable source/time/hash connector envelope가
+있지만 credential 저장·연결 시험·동기화·domain 증거 정규화가 아직 연결되지 않은 상태다.
+Driver output은 그대로 release evidence가 아니다.
+
+- `local_artifacts`: ASCII/binary STL은 ledger와 3D mesh로 저장한다. STEP 및
+  SolidWorks STEP/STL export ZIP은 LLM host의 `forge_inspect_cad_import`에서 bounded
+  source/hash-bound metadata로 검사할 수 있지만, 검사 결과는 명시적으로 비영속이며
+  release evidence가 아니다.
 - `github`: GitHub App과 GitHub Actions read-only driver 사용 가능
   - commit changed files, open PR, exact-SHA Actions runs는 페이지를 끝까지 수집하고,
     수집 중 원본이 바뀌거나 안전 용량 한계에서 완전성을 증명할 수 없으면 evidence
@@ -51,17 +59,32 @@ Provider마다 인증·응답 계약이 다르므로 연결 API는 provider 전�
 - `gitlab`: project access token/OAuth를 가진 read-only pipeline client 계약 구현
 - `jenkins`: API token 기반 read-only build-result client 계약 구현
 - `onshape`: Onshape document metadata read client 계약 구현
-- `simscale`: SimScale simulation run metadata read client 계약 구현
+- `autodesk_aps`, `windchill`, `aras_innovator`: read-only client 계약 구현
+  - 위 client는 source URL, UTC capture time, ETag/Last-Modified, raw response hash,
+    canonical payload hash와 pagination completeness를 connector envelope에 결속
+  - collection pagination을 증명할 수 없으면 `unknown`, 다음 페이지가 있으면
+    `partial`로 표시하며 완전한 domain evidence로 승격하지 않음
+- `simscale`, `matlab_simulink`: 정확한 승인 request hash에 결속된 실행·결과 client 계약 구현
+  - CAE 제출 직전에 승인 결속을 다시 검증하며, 승인 이후 중첩 payload를 바꿀 수 없도록
+    입력을 깊은 불변 구조로 분리한다.
+  - 운영 연결은 `SQLiteCAEApprovalStore`를 별도 DB 파일로 구성한다. `(provider,
+    request_hash, execution_key, phase)` 상태와 provider response hash/receipt를 저장해
+    완료 요청은 외부 재호출 없이 replay하고, 중단 요청은 동일 idempotency key로 resume한다.
 - `llm_host_mcp`: stdio MCP와 localhost HTTP MCP 개발 endpoint 구현. hosted
   Responses/Embeddings client와 semantic retrieval index는 provider transport를 주입해
   사용하며 release 판정 권한 없음
 - `hil_agent`, `ros2_edge`, `mqtt_device`, `opcua_lab`: raw device control은 여전히
-  금지. 대신 approved allowlist command 또는 edge evidence import 결과만 tier-bound
-  evidence로 수집하는 계약 구현
+  금지. ROS2/MQTT/OPC-UA/HIL artifact source scheme, candidate/firmware/artifact hash,
+  signature와 nonce/sequence replay를 검증한 결과만 tier-bound evidence로 수집
 - DigiKey/Mouser/Nexar 같은 BOM 가격 공급처는 이번 범위에서 제외. 수동 quote evidence
   또는 추후 provider driver로만 release cost gate에 사용
-- 나머지 enterprise provider: typed catalog와 credential 요구사항은 준비됐으며 실제
-  driver를 구현하기 전까지 `Adapter required`로 표시
+- 위 client 계약은 실제 계정 연결과 domain source identity/evidence 변환이 완료될 때까지
+  `Driver available`로 표시
+- 승인된 자동 재검증은 release evidence와 trigger를 같은 SQLite transaction에 저장하고,
+  판정과 receipt를 다음 transaction에 함께 저장한다. dashboard/MCP가 시작될 때 receipt가
+  없는 trigger를 다시 처리하므로 중간 종료 뒤에도 요청이 유실되지 않는다.
+- SOLIDWORKS 3DEXPERIENCE, Teamcenter, Ansys 등 배포·라이선스별 계약이 필요한 provider는
+  실제 site adapter를 구현하기 전까지 `Adapter required`로 표시
 
 ## 필수 보안·검증 체크리스트
 

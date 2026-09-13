@@ -7,8 +7,9 @@ from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
+from typing import cast
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from forge_core.cad_geometry import (
     CADGeometryAsset,
@@ -18,6 +19,7 @@ from forge_core.cad_geometry import (
     parse_stl_asset,
 )
 from forge_core.hashing import canonical_sha256
+from forge_core.immutable_json import freeze_json_mapping, thaw_json
 from forge_core.models import ContractModel
 
 MAX_CAD_IMPORT_BYTES = 4_000_000
@@ -75,6 +77,15 @@ class SolidWorksExportPackage(ContractModel):
     assets: tuple[ImportedCADAsset, ...] = Field(min_length=1)
     package_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     package_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("manifest", mode="after")
+    @classmethod
+    def freeze_manifest(cls, value: Mapping[str, object]) -> Mapping[str, object]:
+        return freeze_json_mapping(value)
+
+    @field_serializer("manifest")
+    def serialize_manifest(self, value: Mapping[str, object]) -> dict[str, object]:
+        return cast(dict[str, object], thaw_json(value))
 
     @model_validator(mode="after")
     def package_hash_must_match(self) -> SolidWorksExportPackage:

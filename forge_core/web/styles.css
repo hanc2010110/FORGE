@@ -1550,7 +1550,7 @@ footer {
 }
 .settings-copy {
   color:var(--muted);
-  font-size:13px
+  font-size:14px
 }
 .integration-catalog-section {
   margin:18px 0;
@@ -1561,7 +1561,7 @@ footer {
 }
 .integration-catalog-section>p {
   color:var(--muted);
-  font-size:11px
+  font-size:14px
 }
 .integration-catalog {
   max-height:270px;
@@ -1581,23 +1581,24 @@ footer {
 .integration-card strong {
   overflow:hidden;
   color:#d7e0e7;
-  font-size:11px;
+  font-size:14px;
   text-overflow:ellipsis;
   white-space:nowrap
 }
 .integration-card small {
   margin-top:4px;
   color:var(--muted);
-  font-size:9px;
+  font-size:12px;
   text-transform:uppercase
 }
 .integration-card .catalog-state {
   margin-top:8px;
   color:var(--amber);
-  font:700 9px/1.2 var(--mono)
+  font:700 12px/1.2 var(--mono)
 }
 .integration-card.connected .catalog-state,
 .integration-card.local_available .catalog-state {color:var(--green)}
+.integration-card.driver_available .catalog-state {color:var(--amber)}
 .integration-card.error .catalog-state {color:var(--red)}
 .github-settings-form {
   display:grid;
@@ -1612,7 +1613,7 @@ footer {
   display:grid;
   gap:7px;
   color:#c9d4dd;
-  font-size:12px
+  font-size:14px
 }
 .github-settings-form input {
   width:100%
@@ -1624,7 +1625,8 @@ footer {
   background:var(--surface)
 }
 .key-picker small {
-  color:var(--muted)
+  color:var(--muted);
+  font-size:13px
 }
 .settings-status {
   min-height:58px;
@@ -1635,8 +1637,8 @@ footer {
   gap:3px;
   background:var(--surface)
 }
-.settings-status strong {font-size:12px}
-.settings-status span {color:var(--muted);font-size:11px}
+.settings-status strong {font-size:14px}
+.settings-status span {color:var(--muted);font-size:14px}
 .settings-status.loading {border-color:#846626}
 .settings-status.success {border-color:#2e6a50}
 .settings-status.error {border-color:#8a3d39}
@@ -3884,7 +3886,7 @@ body>footer {display:none}
   border-radius:8px;
   color:#bdbdbd;
   background:transparent;
-  font-size:12px
+  font-size:14px
 }
 .settings-nav button.active {color:#f1f1f1;border:0;background:#323232}
 .integration-panel {padding:24px}
@@ -3919,12 +3921,12 @@ body>footer {display:none}
 .integration-catalog-section>summary strong,
 .integration-catalog-section>summary small {display:block}
 .integration-catalog-section>summary strong {font-size:13px}
-.integration-catalog-section>summary small {margin-top:4px;color:var(--muted);font-size:10px}
+.integration-catalog-section>summary small {margin-top:4px;color:var(--muted);font-size:12px}
 .integration-catalog-section[open]>summary {border-bottom:1px solid #3d3d3d}
-.integration-catalog-section>p {margin:14px 16px 10px;font-size:11px}
+.integration-catalog-section>p {margin:14px 16px 10px;font-size:14px}
 .integration-catalog {max-height:310px;padding:0 16px 16px;grid-template-columns:repeat(2,minmax(0,1fr))}
 .integration-card {padding:12px;border-color:#404040;border-radius:9px;background:#202020}
-.integration-card strong {font-size:12px}
+.integration-card strong {font-size:14px}
 .integration-card .integration-auth {margin-top:8px;color:#b5b5b5;text-transform:none}
 .integration-card .catalog-state {margin-top:10px}
 .settings-security-note {border-radius:10px;background:#242424}

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import json
 import unittest
+from collections.abc import Mapping
 from datetime import UTC, datetime
 
 from forge_core.evidence_runners import (
     CommandEvidenceRunner,
-    EdgeEvidenceVerifier,
     EvidenceRunRequest,
     RegisteredEvidenceCommand,
-    sign_edge_evidence_hmac,
 )
 
 NOW = datetime(2026, 9, 9, 12, tzinfo=UTC)
@@ -44,6 +44,46 @@ class EvidenceRunnerTests(unittest.TestCase):
         self.assertEqual(result.stdout_sha256[:7], "sha256:")
         self.assertEqual(result.interpreted_payload, {"margin": 1.4})
 
+    def test_interpreted_payload_is_detached_deeply_immutable_and_serializable(
+        self,
+    ) -> None:
+        source: dict[str, object] = {"metrics": {"margin": 1.4}, "samples": [1, 2]}
+        runner = CommandEvidenceRunner(
+            commands=(
+                RegisteredEvidenceCommand(
+                    command_id="hil-arm",
+                    adapter_id="hil-edge",
+                    tier="hil",
+                    argv=("forge-hil", "--case", "arm"),
+                    output_kind="json",
+                ),
+            ),
+            process_runner=lambda argv, timeout: (0, json.dumps(source).encode(), b""),
+            clock=lambda: NOW,
+        )
+        result = runner.run(
+            EvidenceRunRequest(
+                run_id="run-immutable",
+                command_id="hil-arm",
+                project_id="robot-arm",
+                candidate_hash="sha256:" + "1" * 64,
+                scenario_hash="sha256:" + "2" * 64,
+                requested_at=NOW,
+            )
+        )
+        source["metrics"] = {"margin": 999}
+        payload = result.interpreted_payload
+        if payload is None:
+            raise AssertionError("expected interpreted payload")
+        metrics = payload["metrics"]
+        self.assertIsInstance(metrics, Mapping)
+        with self.assertRaises(TypeError):
+            metrics["margin"] = 999  # type: ignore[index]
+        self.assertEqual(
+            result.model_dump(mode="json")["interpreted_payload"]["metrics"]["margin"],
+            1.4,
+        )
+
     def test_runner_rejects_unknown_command_and_tier_mismatch(self) -> None:
         runner = CommandEvidenceRunner(
             commands=(
@@ -77,59 +117,6 @@ class EvidenceRunnerTests(unittest.TestCase):
                 argv=("python", "-c", "print(1)"),
                 output_kind="text",
             )
-
-    def test_signed_edge_evidence_accepts_distinct_lab_tiers_without_device_control(
-        self,
-    ) -> None:
-        payload = {"max_current_a": 3.2, "status": "pass"}
-        envelope = sign_edge_evidence_hmac(
-            device_id="bench-01",
-            tier="bench",
-            sequence=1,
-            candidate_hash="sha256:" + "1" * 64,
-            scenario_hash="sha256:" + "2" * 64,
-            payload=payload,
-            captured_at=NOW,
-            shared_secret=b"dev-secret",
-        )
-
-        verifier = EdgeEvidenceVerifier(
-            verifier=lambda message, signature: (
-                sign_edge_evidence_hmac(
-                    device_id="bench-01",
-                    tier="bench",
-                    sequence=1,
-                    candidate_hash="sha256:" + "1" * 64,
-                    scenario_hash="sha256:" + "2" * 64,
-                    payload=payload,
-                    captured_at=NOW,
-                    shared_secret=b"dev-secret",
-                ).signature
-                == signature
-            )
-        )
-        accepted = verifier.verify(envelope)
-
-        self.assertEqual(accepted.tier, "bench")
-        self.assertEqual(accepted.payload_hash[:7], "sha256:")
-        self.assertFalse(accepted.allows_device_control)
-        with self.assertRaisesRegex(ValueError, "replay"):
-            verifier.verify(envelope)
-
-    def test_edge_evidence_rejects_unsigned_or_out_of_order_payloads(self) -> None:
-        envelope = sign_edge_evidence_hmac(
-            device_id="hil-01",
-            tier="hil",
-            sequence=2,
-            candidate_hash="sha256:" + "1" * 64,
-            scenario_hash="sha256:" + "2" * 64,
-            payload={"status": "pass"},
-            captured_at=NOW,
-            shared_secret=b"dev-secret",
-        ).model_copy(update={"signature": "sha256:" + "3" * 64})
-        verifier = EdgeEvidenceVerifier(verifier=lambda _message, _signature: False)
-        with self.assertRaisesRegex(ValueError, "signature"):
-            verifier.verify(envelope)
 
 
 if __name__ == "__main__":

@@ -84,7 +84,9 @@ but it must not force the user through disconnected screens.
 - A change request becomes an inspectable recommendation with `Why`, evidence,
   expected impact, confidence, and `Discuss / Modify / Confirm & Simulate` actions.
 - No simulation can run before explicit human confirmation creates an immutable
-  candidate snapshot.
+  candidate snapshot. Confirmation is a two-step backend gate: the authenticated
+  operator approves one exact candidate request with a single-use nonce, then the
+  backend consumes it into a receipt binding actor, request and candidate hashes.
 - Current, Proposed, and Difference views remain visible beside the conversation.
 - Failed results return to the same conversation as revision options. Earlier
   candidates and simulations remain available for comparison.
@@ -426,11 +428,19 @@ integrations:
    connect/sync mutations use a prepared/completed recovery journal, and exact-SHA
    Actions collection fails closed at GitHub's 1,000-result filtered-search cap.
 
-STEP metadata parsing, hosted AI/embedding transport contracts, semantic retrieval,
-GitLab/Jenkins/Onshape/SimScale read-only clients, localhost HTTP MCP and approved
+STEP/SolidWorks-export attachment inspection, hosted AI/embedding transport contracts,
+semantic retrieval, GitLab/Jenkins/Onshape read-only clients, exact-request-approved
+SimScale/MATLAB execution clients, a durable SQLite CAE execution ledger,
+authenticated localhost HTTP MCP and approved
 simulation/bench/HIL/device evidence-runner contracts are now part of the local
 pilot. SolidWorks native editing, enterprise PLM kernels, vendor CAE solvers, BOM
 price suppliers, SSO and hosted multitenant operations remain outside this round.
+
+Automatic re-verification uses a durable SQLite outbox: release evidence and its
+exact approval trigger commit in one project transaction; the deterministic release
+decision and completion receipt commit in the next. Dashboard and MCP startup drain
+pending triggers, so a process exit between those commits cannot silently lose the
+approved verification request.
 
 ### Local-pilot composition boundary
 
@@ -452,13 +462,23 @@ must use the same separation instead of adding SDK logic to the release facade.
   CI/test, BOM/supply, AI/RAG and robot/lab connections.
 - Every provider advertises typed credentials and canonically ordered read-only
   capabilities. The catalog never stores credential values.
-- `live`, `local`, and `adapter_required` are product truth states. A catalog card
-  cannot claim connection merely because a future provider is listed.
+- `live`, `local`, `driver_available`, and `adapter_required` are product truth states.
+  `driver_available` means client code and source/time/hash connector envelopes exist,
+  but credential lifecycle, connection test, sync and domain release-evidence
+  normalization are not wired. A catalog card cannot claim
+  connection merely because a provider or driver is listed.
 - Network drivers must fix their upstream host, bound time and response size, redact
   secrets and persist normalized source/time/hash evidence rather than bearer tokens.
 - Device, Bench and HIL drivers require a mutually authenticated edge agent and remain
   evidence-read paths; the hosted FORGE service does not receive a generic command or
   device-control route.
+- The signed edge contract accepts only explicit ROS2, MQTT, OPC-UA or HIL-artifact
+  source schemes, binds candidate/firmware/artifact hashes, and rejects nonce or
+  sequence replay. Development HMAC is replaceable through the production verifier
+  boundary and is not a production identity mechanism.
+- The approved iteration orchestrator reacts to a newly recorded evidence hash only
+  after user release confirmation, invokes the deterministic release verifier once,
+  and never grants that authority to the LLM host.
 
 The local extractive RAG provider may combine at most three retrieved chunks, cites
 each excerpt separately, and redacts English and Korean release-authority phrases.
@@ -487,8 +507,8 @@ Implemented now:
 - contextual Engineering Workspace that is hidden by default and opens only after
   an explicit workspace action or relevant context connection;
 - pre-deployment essentials gate that shows enforced local RBAC/audit, cited local
-  RAG, STL geometry and local operations separately from live CAD/CAE/device and
-  hosted operations;
+  RAG, STL geometry and local operations separately from driver-only CAD/CAE/device
+  and hosted operations;
 - attachment/connect affordances labelled as local/read-only concepts;
 - structured evidence-backed recommendation and alternative selection;
 - constraint refinement and Live Plan;
@@ -498,7 +518,7 @@ Implemented now:
 - Current/Proposed/Difference and revision comparison;
 - immutable backend contracts for evidence claims, candidates, simulation binding,
   and guarded state transitions;
-- SQLite v10 persistence and secure loopback API routes for confirmed candidates,
+- SQLite v13 persistence and secure loopback API routes for candidate approvals and confirmed candidates,
   exact simulation bindings, conversational evidence claims, and append-only state
   history;
 - direct-file launch recovery: local assets still render and the interface explains

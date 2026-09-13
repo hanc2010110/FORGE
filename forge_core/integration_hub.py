@@ -25,6 +25,7 @@ class IntegrationCategory(StrEnum):
 class IntegrationImplementation(StrEnum):
     LIVE = "live"
     LOCAL = "local"
+    DRIVER_AVAILABLE = "driver_available"
     ADAPTER_REQUIRED = "adapter_required"
 
 
@@ -58,7 +59,8 @@ class IntegrationProvider(ContractModel):
     auth_strategy: str = Field(min_length=1, max_length=100)
     capabilities: tuple[str, ...]
     credential_fields: tuple[IntegrationCredentialField, ...] = ()
-    read_only: Literal[True] = True
+    access_mode: Literal["read_only", "approved_execution"] = "read_only"
+    read_only: bool = True
     requires_edge_agent: bool = False
 
     @field_validator("provider_id")
@@ -80,11 +82,23 @@ class IntegrationProvider(ContractModel):
         ids = [item.field_id for item in self.credential_fields]
         if len(ids) != len(set(ids)):
             raise ValueError("credential fields must be unique")
+        if self.access_mode == "approved_execution":
+            if self.category is not IntegrationCategory.CAE_SIMULATION:
+                raise ValueError("approved execution is restricted to CAE integrations")
+            if self.read_only:
+                raise ValueError("approved execution cannot be labelled read-only")
+        elif not self.read_only:
+            raise ValueError("non-executing integrations must remain read-only")
         return self
 
 
 ConnectionState = Literal[
-    "connected", "not_connected", "local_available", "adapter_required", "error"
+    "connected",
+    "not_connected",
+    "local_available",
+    "driver_available",
+    "adapter_required",
+    "error",
 ]
 
 
@@ -149,7 +163,7 @@ PROVIDERS = (
         provider_id="openai_hosted",
         name="OpenAI hosted reasoning + embeddings",
         category=IntegrationCategory.AI_RAG,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="API key",
         capabilities=("embeddings.read", "recommendations.read"),
         credential_fields=(
@@ -185,7 +199,7 @@ PROVIDERS = (
         provider_id="gitlab",
         name="GitLab + CI",
         category=IntegrationCategory.SOURCE_CONTROL,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="OAuth or project access token",
         capabilities=("commits.read", "merge_requests.read", "pipelines.read"),
         credential_fields=(
@@ -198,7 +212,7 @@ PROVIDERS = (
         provider_id="onshape",
         name="Onshape",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="OAuth 2.0 bearer token",
         capabilities=("assemblies.read", "documents.read", "revisions.read"),
         credential_fields=(
@@ -210,7 +224,7 @@ PROVIDERS = (
         provider_id="autodesk_aps",
         name="Autodesk Platform Services",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="OAuth 2.0 service account",
         capabilities=("derivatives.read", "models.read", "versions.read"),
         credential_fields=_BEARER,
@@ -237,7 +251,7 @@ PROVIDERS = (
         provider_id="windchill",
         name="PTC Windchill",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="Windchill REST/OAuth",
         capabilities=("bom.read", "change_notices.read", "revisions.read"),
         credential_fields=_BEARER,
@@ -246,7 +260,7 @@ PROVIDERS = (
         provider_id="aras_innovator",
         name="Aras Innovator",
         category=IntegrationCategory.CAD_PLM,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="OAuth 2.0",
         capabilities=("bom.read", "changes.read", "items.read"),
         credential_fields=_BEARER,
@@ -264,9 +278,16 @@ PROVIDERS = (
         provider_id="simscale",
         name="SimScale",
         category=IntegrationCategory.CAE_SIMULATION,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="API key",
-        capabilities=("jobs.read", "projects.read", "results.read"),
+        capabilities=(
+            "jobs.approved_submit",
+            "jobs.read",
+            "projects.read",
+            "results.read",
+        ),
+        access_mode="approved_execution",
+        read_only=False,
         credential_fields=(
             _field("base_url", "SimScale API base URL", "url"),
             _field("api_key", "API key", "secret", secret=True),
@@ -276,9 +297,16 @@ PROVIDERS = (
         provider_id="matlab_simulink",
         name="MATLAB / Simulink",
         category=IntegrationCategory.CAE_SIMULATION,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="MATLAB Production Server bearer token",
-        capabilities=("models.read", "results.read", "runs.read"),
+        capabilities=(
+            "functions.approved_execute",
+            "models.read",
+            "results.read",
+            "runs.read",
+        ),
+        access_mode="approved_execution",
+        read_only=False,
         credential_fields=(
             _field("base_url", "MATLAB Production Server URL", "url"),
             _field("access_token", "Bearer token", "secret", secret=True),
@@ -289,7 +317,7 @@ PROVIDERS = (
         provider_id="jenkins",
         name="Jenkins",
         category=IntegrationCategory.CI_TEST,
-        implementation=IntegrationImplementation.LIVE,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="API token",
         capabilities=("artifacts.read", "builds.read", "tests.read"),
         credential_fields=(
@@ -351,7 +379,7 @@ PROVIDERS = (
         provider_id="hil_agent",
         name="Bench / HIL evidence agent",
         category=IntegrationCategory.DEVICE_LAB,
-        implementation=IntegrationImplementation.LOCAL,
+        implementation=IntegrationImplementation.DRIVER_AVAILABLE,
         auth_strategy="Signed local agent",
         capabilities=("artifacts.read", "runs.read", "tests.read"),
         credential_fields=_EDGE,
@@ -390,6 +418,9 @@ class IntegrationHub:
             elif provider.implementation is IntegrationImplementation.LOCAL:
                 state = "local_available"
                 summary = "Available locally"
+            elif provider.implementation is IntegrationImplementation.DRIVER_AVAILABLE:
+                state = "driver_available"
+                summary = "Driver available; credential wiring required"
             elif provider.implementation is IntegrationImplementation.LIVE:
                 state = "not_connected"
                 summary = "Ready to connect"

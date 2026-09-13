@@ -7,19 +7,18 @@ from typing import Any
 from pydantic import ValidationError
 
 from forge_core.iteration_workflow import (
+    ApprovedIterationOrchestrator,
     CandidateSimulationApproval,
+    DeterministicReleaseOutcome,
+    InMemoryIterationCheckpointStore,
     IterationDecision,
-    IterationEvent,
     IterationEvidenceState,
-    IterationPhase,
     IterationTransitionError,
     LLMIterationRecommendation,
     SimulationExecutionDirective,
     SimulationRequest,
-    append_iteration_event,
     authorize_simulation_request,
     decide_next_iteration,
-    iteration_event_hash,
     simulation_request_hash,
 )
 
@@ -78,35 +77,6 @@ class IterationWorkflowTests(unittest.TestCase):
 
         with self.assertRaises(IterationTransitionError):
             authorize_simulation_request(request, approval)
-
-    def test_event_chain_requires_sequence_and_previous_hash(self) -> None:
-        first = IterationEvent(
-            project_id="robot-arm",
-            candidate_hash="sha256:" + "1" * 64,
-            sequence=1,
-            from_phase=IterationPhase.TALK,
-            to_phase=IterationPhase.CONFIRM,
-            reason="candidate explained to user",
-            observed_at=NOW,
-        )
-        second = IterationEvent(
-            project_id="robot-arm",
-            candidate_hash="sha256:" + "1" * 64,
-            sequence=2,
-            from_phase=IterationPhase.CONFIRM,
-            to_phase=IterationPhase.SIMULATE,
-            reason="approved candidate sent to simulator",
-            observed_at=NOW,
-            previous_event_hash=iteration_event_hash(first),
-        )
-
-        chain = append_iteration_event((), first)
-        chain = append_iteration_event(chain, second)
-
-        self.assertEqual(tuple(event.sequence for event in chain), (1, 2))
-        bad_second = second.model_copy(update={"previous_event_hash": None})
-        with self.assertRaises(IterationTransitionError):
-            append_iteration_event((first,), bad_second)
 
     def test_llm_recommendation_is_non_authoritative(self) -> None:
         recommendation = LLMIterationRecommendation(
@@ -182,6 +152,116 @@ class IterationWorkflowTests(unittest.TestCase):
 
         self.assertEqual(decision.decision, IterationDecision.WAIT_FOR_NEW_EVIDENCE)
         self.assertIn("new evidence", decision.required_actions[0])
+
+    def test_new_evidence_automatically_reverifies_once_after_user_confirmation(
+        self,
+    ) -> None:
+        calls: list[tuple[str, str, str]] = []
+
+        def verify_release(
+            project_id: str, candidate_hash: str, evidence_hash: str
+        ) -> DeterministicReleaseOutcome:
+            calls.append((project_id, candidate_hash, evidence_hash))
+            return DeterministicReleaseOutcome(
+                status="READY",
+                decision_hash="sha256:" + str(len(calls)) * 64,
+            )
+
+        orchestrator = ApprovedIterationOrchestrator(
+            checkpoint_store=InMemoryIterationCheckpointStore(),
+            verify_release=verify_release,
+        )
+        first = IterationEvidenceState(
+            project_id="robot-arm",
+            candidate_hash="sha256:" + "1" * 64,
+            latest_simulation_hash="sha256:" + "2" * 64,
+            latest_evidence_hash="sha256:" + "3" * 64,
+            user_confirmed_release=True,
+            observed_at=NOW,
+        )
+
+        first_result = orchestrator.on_evidence_recorded(first)
+        replay_result = orchestrator.on_evidence_recorded(first)
+        changed_result = orchestrator.on_evidence_recorded(
+            first.model_copy(update={"latest_evidence_hash": "sha256:" + "4" * 64})
+        )
+
+        self.assertTrue(first_result.verification_invoked)
+        self.assertFalse(replay_result.verification_invoked)
+        self.assertEqual(
+            replay_result.next_step.decision,
+            IterationDecision.WAIT_FOR_NEW_EVIDENCE,
+        )
+        self.assertTrue(changed_result.verification_invoked)
+        self.assertEqual(len(calls), 2)
+
+        replay_old_result = orchestrator.on_evidence_recorded(first)
+        self.assertFalse(replay_old_result.verification_invoked)
+        self.assertEqual(len(calls), 2)
+
+    def test_blocked_reverification_routes_to_revision_not_acceptance(self) -> None:
+        orchestrator = ApprovedIterationOrchestrator(
+            checkpoint_store=InMemoryIterationCheckpointStore(),
+            verify_release=lambda _project, _candidate, _evidence: (
+                DeterministicReleaseOutcome(
+                    status="BLOCKED", decision_hash="sha256:" + "8" * 64
+                )
+            ),
+        )
+        state = IterationEvidenceState(
+            project_id="robot-arm",
+            candidate_hash="sha256:" + "1" * 64,
+            latest_evidence_hash="sha256:" + "3" * 64,
+            user_confirmed_release=True,
+            observed_at=NOW,
+        )
+
+        result = orchestrator.on_evidence_recorded(state)
+
+        self.assertTrue(result.verification_invoked)
+        self.assertEqual(result.release_status, "BLOCKED")
+        self.assertEqual(
+            result.next_step.decision, IterationDecision.REVISE_AND_RESIMULATE
+        )
+        self.assertEqual(result.next_step.next_state.value, "revised")
+
+    def test_automatic_reverification_never_runs_without_approval_or_on_failure(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def verify_release(
+            project_id: str, candidate_hash: str, evidence_hash: str
+        ) -> DeterministicReleaseOutcome:
+            calls.append(evidence_hash)
+            return DeterministicReleaseOutcome(
+                status="READY", decision_hash="sha256:" + "9" * 64
+            )
+
+        orchestrator = ApprovedIterationOrchestrator(
+            checkpoint_store=InMemoryIterationCheckpointStore(),
+            verify_release=verify_release,
+        )
+        unconfirmed = IterationEvidenceState(
+            project_id="robot-arm",
+            candidate_hash="sha256:" + "1" * 64,
+            latest_simulation_hash="sha256:" + "2" * 64,
+            latest_evidence_hash="sha256:" + "3" * 64,
+            user_confirmed_release=False,
+            observed_at=NOW,
+        )
+        failed = unconfirmed.model_copy(
+            update={
+                "user_confirmed_release": True,
+                "failing_required_tiers": ("simulation",),
+            }
+        )
+
+        self.assertFalse(
+            orchestrator.on_evidence_recorded(unconfirmed).verification_invoked
+        )
+        self.assertFalse(orchestrator.on_evidence_recorded(failed).verification_invoked)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

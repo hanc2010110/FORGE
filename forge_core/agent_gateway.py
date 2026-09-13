@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import base64
+import binascii
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from pydantic import ValidationError
 
+from forge_core.access_control import LOCAL_ORG_ID
+from forge_core.cad_imports import (
+    import_cad_payload,
+    import_solidworks_export_package,
+)
 from forge_core.integration_hub import IntegrationHub
 from forge_core.models import ContractModel
 from forge_core.release_service import (
     AnalyzeChangeCommand,
     AppendDesignTransitionCommand,
-    BindDesignSimulationCommand,
     CaptureSnapshotCommand,
     ConfirmDesignCandidateCommand,
     CreateChangePreviewCommand,
@@ -19,10 +28,8 @@ from forge_core.release_service import (
     CreateProjectCommand,
     CreateReleaseDiagnosisCommand,
     CreateResolutionPlanCommand,
-    EvaluateReleaseCommand,
     IngestCADGeometryCommand,
     IngestKnowledgeSourceCommand,
-    IngestReleaseEvidenceCommand,
     MutationContext,
     RecordConversationalClaimCommand,
     ReleaseIntegrationService,
@@ -98,16 +105,10 @@ _MUTATION_TOOLS = (
     _MutationTool(
         "forge_confirm_design_candidate",
         "Confirm design candidate",
-        "Freeze the exact user-approved candidate before any simulation is accepted.",
+        "Consume a backend-issued operator approval and freeze its exact candidate; "
+        "the agent cannot issue that approval itself.",
         ConfirmDesignCandidateCommand,
         "confirm_design_candidate",
-    ),
-    _MutationTool(
-        "forge_bind_simulation_result",
-        "Bind simulation result",
-        "Bind source-identified simulation metrics to one confirmed candidate hash.",
-        BindDesignSimulationCommand,
-        "bind_design_simulation",
     ),
     _MutationTool(
         "forge_record_evidence_claim",
@@ -146,21 +147,6 @@ _MUTATION_TOOLS = (
         "verify_external_evidence_plan",
     ),
     _MutationTool(
-        "forge_ingest_release_evidence",
-        "Ingest release evidence",
-        "Store source-bound BOM, firmware build, simulation, bench, HIL, or "
-        "device evidence.",
-        IngestReleaseEvidenceCommand,
-        "ingest_release_evidence",
-    ),
-    _MutationTool(
-        "forge_evaluate_release",
-        "Evaluate release readiness",
-        "Let the deterministic FORGE policy engine calculate READY or BLOCKED.",
-        EvaluateReleaseCommand,
-        "evaluate_release",
-    ),
-    _MutationTool(
         "forge_diagnose_release",
         "Diagnose blocked release",
         "Create evidence-linked blocker diagnoses for a stored release decision.",
@@ -188,6 +174,29 @@ def _project_schema() -> dict[str, Any]:
             "project_id": {"type": "string", "minLength": 1},
         },
         "required": ["project_id"],
+        "additionalProperties": False,
+    }
+
+
+def _cad_inspection_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "project_id": {"type": "string", "minLength": 1},
+            "asset_id": {"type": "string", "minLength": 1},
+            "filename": {"type": "string", "minLength": 1},
+            "source_uri": {"type": "string", "minLength": 1},
+            "source_version": {"type": "string", "minLength": 1},
+            "content_base64": {"type": "string", "minLength": 1},
+        },
+        "required": [
+            "project_id",
+            "asset_id",
+            "filename",
+            "source_uri",
+            "source_version",
+            "content_base64",
+        ],
         "additionalProperties": False,
     }
 
@@ -227,10 +236,12 @@ class ForgeAgentGateway:
         *,
         integration_hub: IntegrationHub | None = None,
         installation_id: str = "forge-agent-local",
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._service = service
         self._integration_hub = integration_hub or IntegrationHub()
         self._installation_id = installation_id
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._mutations = {item.name: item for item in _MUTATION_TOOLS}
 
     def list_tools(self) -> list[dict[str, Any]]:
@@ -253,6 +264,13 @@ class ForgeAgentGateway:
                 "Get project engineering context",
                 "Read the latest evidence, candidate, simulation, and release state.",
                 _project_schema(),
+            ),
+            self._read_tool(
+                "forge_inspect_cad_import",
+                "Inspect STEP, STL, or SolidWorks export",
+                "Parse a bounded attached CAD payload and return source-bound "
+                "geometry metadata without writing CAD or release evidence.",
+                _cad_inspection_schema(),
             ),
         ]
         mutation_tools = [
@@ -308,6 +326,8 @@ class ForgeAgentGateway:
             return {"integrations": self._integration_hub.catalog()}
         if name == "forge_get_project_context":
             return self._project_context(self._required_text(arguments, "project_id"))
+        if name == "forge_inspect_cad_import":
+            return self._inspect_cad_import(arguments)
         spec = self._mutations.get(name)
         if spec is None:
             raise KeyError(f"unknown FORGE tool: {name}")
@@ -392,8 +412,59 @@ class ForgeAgentGateway:
                 "llm_may_explain": True,
                 "llm_may_calculate_physical_results": False,
                 "llm_may_decide_release": False,
-                "release_verdict_source": "forge_evaluate_release",
+                "release_verdict_source": "operator_or_trusted_backend_api",
             },
+        }
+
+    def _inspect_cad_import(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        allowed = {
+            "project_id",
+            "asset_id",
+            "filename",
+            "source_uri",
+            "source_version",
+            "content_base64",
+        }
+        if set(arguments) != allowed:
+            raise ValueError("CAD inspection arguments are missing or unknown")
+        project_id = self._required_text(arguments, "project_id")
+        self._service.authorize_project_read(project_id)
+        encoded = self._required_text(arguments, "content_base64")
+        try:
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise ValueError("content_base64 must be valid base64") from exc
+        asset_id = self._required_text(arguments, "asset_id")
+        source_uri = self._required_text(arguments, "source_uri")
+        source_version = self._required_text(arguments, "source_version")
+        captured_at = self._clock()
+        filename = self._required_text(arguments, "filename")
+        if PurePosixPath(filename).suffix.casefold() == ".zip":
+            inspection = import_solidworks_export_package(
+                asset_id=asset_id,
+                project_id=project_id,
+                tenant_id=LOCAL_ORG_ID,
+                source_uri=source_uri,
+                source_version=source_version,
+                captured_at=captured_at,
+                content=content,
+            ).model_dump(mode="json")
+        else:
+            inspection = import_cad_payload(
+                asset_id=asset_id,
+                project_id=project_id,
+                tenant_id=LOCAL_ORG_ID,
+                source_uri=source_uri,
+                source_version=source_version,
+                captured_at=captured_at,
+                filename=filename,
+                content=content,
+            ).model_dump(mode="json")
+        return {
+            "inspection": inspection,
+            "authority": "read_only_geometry_inspection",
+            "persisted": False,
+            "release_evidence": False,
         }
 
     @staticmethod
@@ -419,6 +490,8 @@ class ForgeAgentGateway:
                 "Simulation, bench, HIL, and physical-device evidence remain distinct.",
                 "AI BOM prices are estimates, never release evidence.",
                 "Only FORGE policy evaluation may return READY or BLOCKED.",
+                "The LLM tool surface cannot ingest raw release evidence, bind "
+                "simulation results, or invoke release evaluation.",
                 "No generic device-control or CAD write-back tool is exposed.",
             ],
         }

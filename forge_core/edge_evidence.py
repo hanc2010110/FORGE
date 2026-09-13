@@ -5,14 +5,17 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
+from threading import Lock
 from typing import Literal, Protocol
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_serializer, field_validator, model_validator
 
 from forge_core.hashing import canonical_sha256
+from forge_core.immutable_json import freeze_json_mapping, thaw_json
 from forge_core.models import ContractModel
 
 EdgeTier = Literal["simulation", "bench", "hil", "physical_device"]
+EdgeAdapter = Literal["ros2", "mqtt", "opcua", "hil_artifact"]
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _ZERO_HASH = "sha256:" + "0" * 64
 _SIGNATURE_PREFIX = "hmac-sha256:"
@@ -50,7 +53,7 @@ class EdgeEvidenceEnvelope(ContractModel):
     rig_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
     tier: EdgeTier
-    adapter: str = Field(min_length=1)
+    adapter: EdgeAdapter
     source_uri: str = Field(min_length=1)
     captured_at: datetime
     sequence: int = Field(ge=1)
@@ -71,7 +74,6 @@ class EdgeEvidenceEnvelope(ContractModel):
         "device_id",
         "rig_id",
         "run_id",
-        "adapter",
         "nonce",
     )
     @classmethod
@@ -109,10 +111,32 @@ class EdgeEvidenceEnvelope(ContractModel):
             raise ValueError("edge evidence signature is invalid")
         return value
 
+    @field_validator("payload", mode="after")
+    @classmethod
+    def payload_must_be_deeply_immutable(
+        cls, value: Mapping[str, object]
+    ) -> Mapping[str, object]:
+        return freeze_json_mapping(value)
+
+    @field_serializer("payload")
+    def serialize_payload(self, value: Mapping[str, object]) -> object:
+        return thaw_json(value)
+
     @model_validator(mode="after")
     def payload_and_hash_must_be_safe(self) -> EdgeEvidenceEnvelope:
         if _contains_forbidden_control_key(self.payload):
             raise ValueError("edge evidence cannot carry raw device control payloads")
+        scheme = self.source_uri.split("://", maxsplit=1)[0].casefold()
+        allowed_schemes = {
+            "ros2": {"ros2"},
+            "mqtt": {"mqtt", "mqtts"},
+            "opcua": {"opc.tcp", "https"},
+            "hil_artifact": {"file", "https"},
+        }
+        if scheme not in allowed_schemes[self.adapter]:
+            raise ValueError("edge evidence adapter does not match source protocol")
+        if self.adapter == "hil_artifact" and self.tier != "hil":
+            raise ValueError("HIL artifact adapter requires HIL evidence tier")
         if self.envelope_hash != edge_envelope_hash(
             self.model_copy(update={"envelope_hash": _ZERO_HASH})
         ):
@@ -186,19 +210,30 @@ class ReplayStore(Protocol):
 
 class InMemoryReplayStore:
     def __init__(self) -> None:
-        self._nonces: set[tuple[str, str]] = set()
-        self._last_sequence: dict[tuple[str, str], int] = {}
+        self._lock = Lock()
+        self._nonces: set[tuple[str, str, str, str]] = set()
+        self._last_sequence: dict[tuple[str, str, str], int] = {}
 
     def accept_once(self, envelope: EdgeEvidenceEnvelope) -> None:
-        nonce_key = (envelope.device_id, envelope.nonce)
-        if nonce_key in self._nonces:
-            raise EdgeEvidenceError("edge_evidence_replay")
-        sequence_key = (envelope.project_id, envelope.device_id)
-        previous = self._last_sequence.get(sequence_key, 0)
-        if envelope.sequence <= previous:
-            raise EdgeEvidenceError("edge_evidence_sequence_rollback")
-        self._nonces.add(nonce_key)
-        self._last_sequence[sequence_key] = envelope.sequence
+        with self._lock:
+            nonce_key = (
+                envelope.tenant_id,
+                envelope.project_id,
+                envelope.device_id,
+                envelope.nonce,
+            )
+            if nonce_key in self._nonces:
+                raise EdgeEvidenceError("edge_evidence_replay")
+            sequence_key = (
+                envelope.tenant_id,
+                envelope.project_id,
+                envelope.device_id,
+            )
+            previous = self._last_sequence.get(sequence_key, 0)
+            if envelope.sequence <= previous:
+                raise EdgeEvidenceError("edge_evidence_sequence_rollback")
+            self._nonces.add(nonce_key)
+            self._last_sequence[sequence_key] = envelope.sequence
 
 
 class EdgeEvidenceIngestor:
@@ -241,7 +276,7 @@ def create_development_signed_envelope(
     rig_id: str,
     run_id: str,
     tier: EdgeTier,
-    adapter: str,
+    adapter: EdgeAdapter,
     source_uri: str,
     captured_at: datetime,
     sequence: int,
@@ -316,6 +351,7 @@ def _contains_forbidden_control_key(payload: Mapping[str, object]) -> bool:
 __all__ = [
     "AcceptedEdgeEvidence",
     "DevelopmentHMACVerifier",
+    "EdgeAdapter",
     "EdgeEvidenceEnvelope",
     "EdgeEvidenceError",
     "EdgeEvidenceIngestor",

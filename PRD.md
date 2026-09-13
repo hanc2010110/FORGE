@@ -17,7 +17,7 @@ Enterprise API에서 동일한 immutable evidence와 policy 계약을 사용한�
 
 FORGE는 CAD, PLM, Git, CI, simulation, bench, HIL, 실제 장치 시험 시스템을 대체하지 않는다. 각 시스템이 소유한 revision, artifact, log, 결과를 읽기 전용 snapshot과 immutable sidecar record로 연결하는 validation layer다.
 
-현재 로컬 pilot은 deterministic rule/policy checks, immutable ledgers, 실제 STL 형상 parsing/viewing, source-grounded local RAG, RBAC enforcement와 audit, health/backup/restore, host-neutral MCP agent gateway와 Codex plugin을 제공한다. Hosted LLM은 FORGE 내부 기능이 아니라 host로 연결한다. Live CAE/CAD/device execution은 아직 제공하지 않으며 자동 write-back이나 generic device control을 제품 계약으로 추가하지 않는다.
+현재 로컬 pilot은 deterministic rule/policy checks, immutable ledgers, 실제 STL 형상 parsing/viewing, bounded STEP 및 SolidWorks-export 검사, source-grounded local/hosted AI transport, RBAC enforcement와 audit, health/backup/restore, host-neutral MCP agent gateway와 Codex plugin을 제공한다. LLM은 FORGE backend의 판정 권한자가 아니라 대화 host 또는 교체 가능한 provider다. 설계 확정은 authenticated actor, exact candidate request hash, single-use nonce와 생성된 candidate hash를 영속 receipt로 묶는다. SimScale/MATLAB 실행 client는 exact-request approval과 고정 idempotency key를 요구하고 별도 SQLite execution ledger로 completed response replay와 interrupted request resume를 제공하며, bench/HIL/device는 signed no-control evidence 수집 계약만 제공한다. CAD/PLM 자동 write-back, generic device control, 자체 solver는 제품 계약에 포함하지 않는다.
 
 ## 2. 해결할 문제
 
@@ -129,9 +129,13 @@ MVP에서 구조만 정의하고 production 기능으로 약속하지 않는 항
 | 로컬 운영·복구 기반 | 15% | 84% |
 | 실제 외부 ecosystem 연동 | 10% | 60% |
 
-가중 결과는 약 88%이다. 외부 ecosystem 60%는 GitHub live 연결, STEP/STL local CAD
-파싱, hosted AI/embedding transport 계약, GitLab/Jenkins/Onshape/SimScale read-only
-client 계약, allowlisted simulation/bench/HIL/device evidence runner까지 포함한다.
+가중 결과는 약 88%이다. 외부 ecosystem 60%는 GitHub live 연결, STL ledger 저장,
+STEP/SolidWorks-export local 검사, hosted AI/embedding transport 계약,
+GitLab/Jenkins/Onshape read-only client와 exact-request-approved SimScale/MATLAB
+실행 client 계약, source/time/hash/pagination connector envelope, allowlisted
+simulation/bench/HIL/device evidence runner와 내구성 있는 승인 후 자동 재검증까지
+포함한다. connector envelope는 실제 계정 연결이나 domain
+release evidence 정규화를 의미하지 않는다.
 BOM 가격 공급처(6번)와 로그인/멀티테넌시(9번)는 이번 산정에서 제외한다. 따라서 이
 평가는 로컬 pilot 배포 시험 준비도이며 완전한 enterprise SaaS 또는 안전 인증 완료를
 의미하지 않는다.
@@ -352,7 +356,7 @@ Implemented R0/R1 routes:
 | POST | `/api/v1/projects` | create project and release policy |
 | GET | `/api/v1/projects/{project}` | read project |
 | GET | `/api/v1/connectors` | read local connector manifests |
-| GET | `/api/v1/integrations` | read typed future/live integration catalog |
+| GET | `/api/v1/integrations` | read typed connected/local/driver/adapter catalog |
 | GET | `/api/v1/integrations/github` | read redacted GitHub connection status |
 | POST | `/api/v1/integrations/github/test` | test App credentials without persistence |
 | POST | `/api/v1/integrations/github` | verify and store local GitHub App configuration |
@@ -380,6 +384,8 @@ Structured resolution route contracts:
 | --- | --- | --- |
 | POST | `/api/v1/projects/{project}/design-proposals` | create planning-only design alternatives from a source-bound preview |
 | GET | `/api/v1/projects/{project}/design-proposals/{proposal_hash}` | read immutable design proposal set |
+| POST | `/api/v1/projects/{project}/design-candidate-approvals` | authenticated operator approves one exact candidate request and nonce hash |
+| POST | `/api/v1/projects/{project}/design-candidates` | consume one approval into a candidate and immutable approval receipt |
 | POST | `/api/v1/projects/{project}/release-diagnoses` | create evidence-bound blocker diagnosis from a release decision |
 | GET | `/api/v1/projects/{project}/release-diagnoses/{diagnosis_hash}` | read immutable blocker diagnosis and fix proposals |
 | POST | `/api/v1/projects/{project}/resolution-plans` | select a fix proposal and create a planning-only replan seed |
@@ -582,9 +588,9 @@ Future conversational session behavior:
 ### R2 — Production Source Adapters
 
 - bounded ASCII/binary STL import and contextual 3D viewing — implemented
-- STEP/SolidWorks assembly metadata and file-based CAD/EDA/PLM export connector
-- local Git connector
-- CI result connector
+- bounded STEP metadata and SolidWorks STEP/STL export-package inspection — implemented
+- GitHub live read-only connector and GitLab read-only client contract — implemented
+- GitHub Actions/Jenkins read-only result client contracts — implemented
 - golden component and revision corpus
 - connector health and freshness
 

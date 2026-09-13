@@ -88,7 +88,7 @@ class RemoteMCPServerTests(unittest.TestCase):
     def test_server_rejects_bad_length_and_chunked_before_reading_body(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             server, store = create_remote_mcp_server(
-                Path(temporary) / "forge.db", port=0
+                Path(temporary) / "forge.db", port=0, bearer_token="dev-token"
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -138,10 +138,17 @@ class RemoteMCPServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(ValueError, "localhost-only"):
                 create_remote_mcp_server(
-                    Path(temporary) / "forge.db", host="0.0.0.0", port=0
+                    Path(temporary) / "forge.db",
+                    host="0.0.0.0",
+                    port=0,
+                    bearer_token="dev-token",
                 )
             with self.assertRaisesRegex(ValueError, "TCP bounds"):
-                create_remote_mcp_server(Path(temporary) / "forge.db", port=65_536)
+                create_remote_mcp_server(
+                    Path(temporary) / "forge.db",
+                    port=65_536,
+                    bearer_token="dev-token",
+                )
 
     def test_main_prints_bound_port_and_closes_server_and_store(self) -> None:
         fake_server = _FakeHTTPServer()
@@ -175,6 +182,15 @@ class RemoteMCPServerTests(unittest.TestCase):
             patch.object(remote_mcp_server, "create_remote_mcp_server") as create,
             patch.dict(os.environ, {"FORGE_REMOTE_MCP_PORT": "not-a-port"}),
             self.assertRaisesRegex(ValueError, "must be an integer"),
+        ):
+            remote_mcp_server.main()
+        create.assert_not_called()
+
+    def test_main_requires_bearer_token(self) -> None:
+        with (
+            patch.object(remote_mcp_server, "create_remote_mcp_server") as create,
+            patch.dict(os.environ, {}, clear=True),
+            self.assertRaisesRegex(ValueError, "FORGE_REMOTE_MCP_TOKEN is required"),
         ):
             remote_mcp_server.main()
         create.assert_not_called()

@@ -46,7 +46,11 @@ class ForgeMCPServer:
                     },
                     "instructions": (
                         "Use FORGE as the evidence and policy authority. Obtain "
-                        "explicit user approval before every non-read-only tool call."
+                        "explicit user approval before every non-read-only tool call. "
+                        "Raw release evidence ingestion, simulation result binding, "
+                        "and READY/BLOCKED evaluation are deliberately unavailable "
+                        "to the LLM and must occur through a trusted operator or "
+                        "connector path."
                     ),
                 },
             )
@@ -110,6 +114,7 @@ def create_agent_runtime(
         service = ReleaseIntegrationService(
             store, ConnectorRegistry(), clock=lambda: datetime.now(UTC)
         )
+        service.process_pending_automatic_reverifications()
         github_dir = config_dir or database_path.parent / ".forge-local" / "github"
         github = GitHubIntegrationService(GitHubCredentialStore(github_dir))
         gateway = ForgeAgentGateway(

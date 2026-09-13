@@ -6,6 +6,7 @@ from typing import Literal
 
 from forge_core.hosted_ai import (
     HostedAIError,
+    OpenAIEmbeddingProvider,
     OpenAIEmbeddingsClient,
     OpenAIResponsesClient,
 )
@@ -121,6 +122,30 @@ class HostedAITests(unittest.TestCase):
         embeddings = client.embed_texts("text-embedding-test", ["alpha", "beta"])
         self.assertEqual(embeddings, ((1.0, 0.0), (0.0, 1.0)))
 
+        provider = OpenAIEmbeddingProvider(
+            client=client, model_id="text-embedding-test", dimensions=2
+        )
+        self.assertEqual(provider.model_id, "text-embedding-test")
+        self.assertEqual(provider.dimensions, 2)
+        self.assertEqual(
+            provider.embed_texts(["alpha", "beta"]),
+            ((1.0, 0.0), (0.0, 1.0)),
+        )
+
+    def test_embedding_provider_rejects_dimension_mismatch(self) -> None:
+        client = OpenAIEmbeddingsClient(
+            api_key="sk-test-secret",
+            transport=FakeTransport({"data": [{"index": 0, "embedding": [1.0, 0.0]}]}),
+            base_url="https://api.test",
+        )
+        provider = OpenAIEmbeddingProvider(
+            client=client, model_id="text-embedding-test", dimensions=3
+        )
+        with self.assertRaisesRegex(
+            HostedAIError, "openai_embedding_dimension_mismatch"
+        ):
+            provider.embed_texts(["alpha"])
+
     def test_responses_client_accepts_output_text_fallback(self) -> None:
         client = OpenAIResponsesClient(
             api_key="sk-test-secret",
@@ -182,6 +207,14 @@ class HostedAITests(unittest.TestCase):
             OpenAIResponsesClient(
                 api_key="sk", transport=FakeTransport({})
             ).create_text_response(model="bad model", input_text="hello")
+        with self.assertRaises(ValueError):
+            OpenAIEmbeddingProvider(
+                client=OpenAIEmbeddingsClient(
+                    api_key="sk", transport=FakeTransport({})
+                ),
+                model_id="embedding-model",
+                dimensions=0,
+            )
 
 
 if __name__ == "__main__":

@@ -21,11 +21,15 @@ class RemoteMCPTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_streamable_http_post_reuses_mcp_handler(self) -> None:
-        transport = ForgeRemoteMCPTransport(self.server)
+        transport = ForgeRemoteMCPTransport(self.server, bearer_token="dev-token")
         status, headers, body = transport.handle_http(
             method="POST",
             path="/mcp",
-            headers={"host": "127.0.0.1:43128", "content-type": "application/json"},
+            headers={
+                "host": "127.0.0.1:43128",
+                "content-type": "application/json",
+                "authorization": "Bearer dev-token",
+            },
             body=json.dumps(
                 {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
             ).encode(),
@@ -56,7 +60,9 @@ class RemoteMCPTests(unittest.TestCase):
         self.assertEqual(missing_token[0], 401)
 
     def test_transport_bounds_method_path_type_and_size(self) -> None:
-        transport = ForgeRemoteMCPTransport(self.server, max_request_bytes=10)
+        transport = ForgeRemoteMCPTransport(
+            self.server, bearer_token="dev-token", max_request_bytes=10
+        )
         self.assertEqual(
             transport.handle_http(
                 method="GET",

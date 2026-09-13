@@ -16,6 +16,7 @@ MAX_EMBEDDING_INPUTS = 128
 MAX_EMBEDDING_TEXT_BYTES = 64_000
 DEFAULT_TIMEOUT_SECONDS = 20.0
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_SCHEMA_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 
 
 class RedactedHeaders(dict[str, str]):
@@ -51,6 +52,11 @@ class HostedAITransport(Protocol):
 class HostedTextResponse(ContractModel):
     response_id: str = Field(min_length=1)
     output_text: str = Field(min_length=1)
+
+
+class HostedJSONResponse(ContractModel):
+    response_id: str = Field(min_length=1)
+    payload: Mapping[str, object]
 
 
 def _validate_api_key(api_key: str) -> str:
@@ -178,6 +184,61 @@ class OpenAIResponsesClient(_HostedAIClient):
             raise HostedAIError("openai_invalid_response", "Invalid response payload.")
         return HostedTextResponse(response_id=response_id, output_text=text)
 
+    def create_json_response(
+        self,
+        *,
+        model: str,
+        input_text: str,
+        schema_name: str,
+        schema: Mapping[str, object],
+        temperature: float = 0.0,
+        instructions: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> HostedJSONResponse:
+        if not input_text or len(input_text.encode("utf-8")) > MAX_AI_REQUEST_BYTES:
+            raise ValueError("response input is outside supported bounds")
+        if _SCHEMA_NAME.fullmatch(schema_name) is None:
+            raise ValueError("response schema name is invalid")
+        if temperature < 0 or temperature > 1:
+            raise ValueError("response temperature must be between 0 and 1")
+        payload: dict[str, object] = {
+            "model": _validate_model(model),
+            "input": input_text,
+            "temperature": temperature,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": dict(schema),
+                }
+            },
+        }
+        if instructions is not None:
+            payload["instructions"] = instructions
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        decoded = self._post("/v1/responses", payload)
+        if not isinstance(decoded, dict):
+            raise HostedAIError("openai_invalid_response", "Invalid response payload.")
+        response_id = decoded.get("id")
+        text = _extract_response_text(decoded)
+        if not isinstance(response_id, str) or not response_id or not text:
+            raise HostedAIError("openai_invalid_response", "Invalid response payload.")
+        try:
+            structured = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise HostedAIError(
+                "openai_invalid_structured_response",
+                "Hosted AI provider returned invalid structured output.",
+            ) from exc
+        if not isinstance(structured, dict):
+            raise HostedAIError(
+                "openai_invalid_structured_response",
+                "Hosted AI provider returned invalid structured output.",
+            )
+        return HostedJSONResponse(response_id=response_id, payload=structured)
+
 
 class OpenAIEmbeddingsClient(_HostedAIClient):
     def embed_texts(
@@ -214,6 +275,40 @@ class OpenAIEmbeddingsClient(_HostedAIClient):
         return tuple(ordered[index] for index in range(len(texts)))
 
 
+class OpenAIEmbeddingProvider:
+    """Adapts the hosted embeddings client to the semantic RAG provider boundary."""
+
+    def __init__(
+        self,
+        *,
+        client: OpenAIEmbeddingsClient,
+        model_id: str,
+        dimensions: int,
+    ) -> None:
+        if dimensions < 1 or dimensions > 4096:
+            raise ValueError("embedding dimensions are outside supported bounds")
+        self._client = client
+        self._model_id = _validate_model(model_id)
+        self._dimensions = dimensions
+
+    @property
+    def model_id(self) -> str:
+        return self._model_id
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    def embed_texts(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        embeddings = self._client.embed_texts(self._model_id, texts)
+        if any(len(embedding) != self._dimensions for embedding in embeddings):
+            raise HostedAIError(
+                "openai_embedding_dimension_mismatch",
+                "Hosted embedding dimensions did not match configuration.",
+            )
+        return embeddings
+
+
 def _finite_float(value: object) -> float:
     if not isinstance(value, int | float):
         raise HostedAIError("openai_invalid_response", "Embedding value is invalid.")
@@ -248,7 +343,9 @@ def _extract_response_text(payload: Mapping[str, object]) -> str:
 __all__ = [
     "HostedAIError",
     "HostedAITransport",
+    "HostedJSONResponse",
     "HostedTextResponse",
+    "OpenAIEmbeddingProvider",
     "OpenAIEmbeddingsClient",
     "OpenAIResponsesClient",
 ]

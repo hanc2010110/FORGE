@@ -361,6 +361,11 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         return version
 
     def _drop_access_control_schema(self, connection: sqlite3.Connection) -> None:
+        connection.execute("DROP TABLE design_candidate_approval_receipts")
+        connection.execute("DROP TABLE design_candidate_approvals")
+        connection.execute("DROP TABLE automatic_reverification_failures")
+        connection.execute("DROP TABLE automatic_reverification_receipts")
+        connection.execute("DROP TABLE automatic_reverification_triggers")
         connection.execute("DROP TABLE cad_geometry_assets")
         connection.execute("DROP TABLE conversation_runtime_results")
         connection.execute("DROP TABLE knowledge_sources")
@@ -369,6 +374,9 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         connection.execute("DROP TABLE memberships")
         connection.execute("DROP TABLE actors")
         connection.execute("DROP TABLE organizations")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 12")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 13")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 11")
         connection.execute("DELETE FROM schema_migrations WHERE version = 10")
         connection.execute("DELETE FROM schema_migrations WHERE version = 9")
         connection.execute("DELETE FROM schema_migrations WHERE version = 8")
@@ -376,7 +384,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
     def test_schema_initialization_pragmas_reopen_and_newer_rejection(self) -> None:
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
             self.assertEqual(
                 connection.execute("PRAGMA journal_mode").fetchone()[0], "wal"
@@ -385,7 +393,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0],
-                10,
+                13,
             )
         reopened = SQLiteEvidenceStore(self.path)
         reopened.create_project(self.project)
@@ -410,12 +418,12 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
 
         newer = Path(self.temporary.name) / "newer.db"
         with sqlite3.connect(newer) as connection:
-            connection.execute("PRAGMA user_version = 11")
+            connection.execute("PRAGMA user_version = 14")
         with self.assertRaises(MigrationError):
             SQLiteEvidenceStore(newer)
         with sqlite3.connect(newer) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 11
+                connection.execute("PRAGMA user_version").fetchone()[0], 14
             )
 
     def test_schema_v1_is_migrated_to_v7_without_losing_records(self) -> None:
@@ -473,7 +481,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
             tables = {
                 row[0]
@@ -510,6 +518,9 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
                 "knowledge_sources",
                 "conversation_runtime_results",
                 "cad_geometry_assets",
+                "automatic_reverification_triggers",
+                "automatic_reverification_receipts",
+                "automatic_reverification_failures",
             }
             <= tables
         )
@@ -553,13 +564,13 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertEqual(migrated_policy.stored_at, self.project.created_at)
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
             self.assertEqual(
                 connection.execute(
                     "SELECT MAX(version) FROM schema_migrations"
                 ).fetchone()[0],
-                10,
+                13,
             )
 
     def test_schema_v3_is_migrated_to_v7_without_losing_records(self) -> None:
@@ -593,7 +604,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v4_is_migrated_to_v7_without_losing_records(self) -> None:
@@ -622,7 +633,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v5_is_migrated_to_v7_with_empty_resolution_ledgers(self) -> None:
@@ -657,7 +668,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertEqual(migrated.list_resolution_plans(self.project.project_id), ())
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v6_is_migrated_to_v7_with_empty_conversation_ledgers(
@@ -684,7 +695,7 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v7_is_migrated_to_v8_with_local_access_bootstrap(self) -> None:
@@ -719,15 +730,23 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         )
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v8_is_migrated_to_v9_with_empty_local_rag_ledgers(self) -> None:
         self.store.create_project(self.project)
         with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE design_candidate_approval_receipts")
+            connection.execute("DROP TABLE design_candidate_approvals")
+            connection.execute("DROP TABLE automatic_reverification_failures")
+            connection.execute("DROP TABLE automatic_reverification_receipts")
+            connection.execute("DROP TABLE automatic_reverification_triggers")
             connection.execute("DROP TABLE cad_geometry_assets")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
             connection.execute("DROP TABLE conversation_runtime_results")
             connection.execute("DROP TABLE knowledge_sources")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 12")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 11")
             connection.execute("DELETE FROM schema_migrations WHERE version = 10")
             connection.execute("DELETE FROM schema_migrations WHERE version = 9")
             connection.execute("PRAGMA user_version = 8")
@@ -738,13 +757,21 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertEqual(migrated.list_runtime_results("project-1"), ())
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_schema_v9_is_migrated_to_v10_with_empty_cad_geometry_ledger(self) -> None:
         self.store.create_project(self.project)
         with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE design_candidate_approval_receipts")
+            connection.execute("DROP TABLE design_candidate_approvals")
+            connection.execute("DROP TABLE automatic_reverification_failures")
+            connection.execute("DROP TABLE automatic_reverification_receipts")
+            connection.execute("DROP TABLE automatic_reverification_triggers")
             connection.execute("DROP TABLE cad_geometry_assets")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 12")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 11")
             connection.execute("DELETE FROM schema_migrations WHERE version = 10")
             connection.execute("PRAGMA user_version = 9")
 
@@ -753,7 +780,48 @@ class SQLiteEvidenceStoreTests(unittest.TestCase):
         self.assertEqual(migrated.list_cad_geometries("project-1"), ())
         with sqlite3.connect(self.path) as connection:
             self.assertEqual(
-                connection.execute("PRAGMA user_version").fetchone()[0], 10
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
+            )
+
+    def test_schema_v10_is_migrated_to_v12_with_empty_reverification_ledgers(
+        self,
+    ) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE design_candidate_approval_receipts")
+            connection.execute("DROP TABLE design_candidate_approvals")
+            connection.execute("DROP TABLE automatic_reverification_failures")
+            connection.execute("DROP TABLE automatic_reverification_receipts")
+            connection.execute("DROP TABLE automatic_reverification_triggers")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 12")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 11")
+            connection.execute("PRAGMA user_version = 10")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.list_pending_automatic_reverification_triggers(), ())
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
+            )
+
+    def test_schema_v11_is_migrated_to_v12_with_empty_failure_ledger(self) -> None:
+        self.store.create_project(self.project)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DROP TABLE design_candidate_approval_receipts")
+            connection.execute("DROP TABLE design_candidate_approvals")
+            connection.execute("DROP TABLE automatic_reverification_failures")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 13")
+            connection.execute("DELETE FROM schema_migrations WHERE version = 12")
+            connection.execute("PRAGMA user_version = 11")
+
+        migrated = SQLiteEvidenceStore(self.path)
+
+        self.assertEqual(migrated.list_automatic_reverification_failures(), ())
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0], 13
             )
 
     def test_access_control_records_and_audit_events_are_persisted(self) -> None:

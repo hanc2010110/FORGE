@@ -271,6 +271,8 @@ class DashboardAssetTests(unittest.TestCase):
         self.assertIn("persistGuidedCandidateAndSimulation(revision)", script)
         self.assertIn("persistGuidedTransition(toState", script)
         self.assertIn('persistGuidedMutation("design-candidates"', script)
+        self.assertIn('persistGuidedMutation("design-candidate-approvals"', script)
+        self.assertIn("crypto.randomUUID()", script)
         self.assertIn('persistGuidedMutation("design-simulations"', script)
         self.assertIn('persistGuidedMutation("conversational-claims"', script)
         self.assertIn('persistGuidedMutation("design-transitions"', script)

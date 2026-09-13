@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from typing import cast
 
 from forge_core.edge_evidence import (
     DevelopmentHMACVerifier,
+    EdgeAdapter,
     EdgeEvidenceEnvelope,
     EdgeEvidenceError,
     EdgeEvidenceIngestor,
+    EdgeTier,
     InMemoryReplayStore,
     create_development_signed_envelope,
 )
@@ -74,6 +79,72 @@ class EdgeEvidenceTests(unittest.TestCase):
             EdgeEvidenceError, "edge_evidence_sequence_rollback"
         ):
             ingestor.ingest(rollback)
+
+    def test_nested_signed_payload_is_immutable_after_acceptance(self) -> None:
+        verifier = DevelopmentHMACVerifier(secret="edge-secret")
+        envelope = _signed(sequence=1, nonce="immutable", verifier=verifier)
+        accepted = EdgeEvidenceIngestor(
+            verifier=verifier,
+            replay_store=InMemoryReplayStore(),
+            now=lambda: CAPTURED_AT,
+        ).ingest(envelope)
+        payload = accepted.envelope.payload
+        nested = payload["measurement"]
+        self.assertIsInstance(nested, Mapping)
+        with self.assertRaises(TypeError):
+            nested["temperature_c"] = 99  # type: ignore[index]
+        self.assertEqual(
+            accepted.model_dump(mode="json")["envelope"]["payload"]["measurement"][
+                "temperature_c"
+            ],
+            38.2,
+        )
+
+    def test_replay_acceptance_is_atomic_across_threads(self) -> None:
+        verifier = DevelopmentHMACVerifier(secret="edge-secret")
+        envelope = _signed(sequence=1, nonce="concurrent", verifier=verifier)
+        ingestor = EdgeEvidenceIngestor(
+            verifier=verifier,
+            replay_store=InMemoryReplayStore(),
+            now=lambda: CAPTURED_AT,
+        )
+
+        def attempt() -> str:
+            try:
+                ingestor.ingest(envelope)
+            except EdgeEvidenceError as exc:
+                return exc.code
+            return "accepted"
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(lambda _: attempt(), range(8)))
+        self.assertEqual(results.count("accepted"), 1)
+        self.assertEqual(results.count("edge_evidence_replay"), 7)
+
+    def test_replay_namespaces_are_isolated_by_tenant_and_project(self) -> None:
+        verifier = DevelopmentHMACVerifier(secret="edge-secret")
+        ingestor = EdgeEvidenceIngestor(
+            verifier=verifier,
+            replay_store=InMemoryReplayStore(),
+            now=lambda: CAPTURED_AT,
+        )
+        ingestor.ingest(_signed(sequence=1, nonce="shared", verifier=verifier))
+        ingestor.ingest(
+            _signed(
+                sequence=1,
+                nonce="shared",
+                verifier=verifier,
+                project_id="other-project",
+            )
+        )
+        ingestor.ingest(
+            _signed(
+                sequence=1,
+                nonce="shared",
+                verifier=verifier,
+                tenant_id="other-tenant",
+            )
+        )
 
     def test_tampering_and_device_control_payloads_fail_closed(self) -> None:
         verifier = DevelopmentHMACVerifier(secret="edge-secret")
@@ -176,16 +247,80 @@ class EdgeEvidenceTests(unittest.TestCase):
                 envelope_hash="sha256:" + "0" * 64,
             )
 
+    def test_each_supported_read_only_edge_adapter_has_an_explicit_route(self) -> None:
+        verifier = DevelopmentHMACVerifier(secret="edge-secret")
+        cases = (
+            ("ros2", "ros2://robot.local/forge/evidence", "simulation"),
+            ("mqtt", "mqtts://bench.local/forge/evidence", "bench"),
+            ("opcua", "opc.tcp://plc.local/forge/evidence", "physical_device"),
+            ("hil_artifact", "file://hil-rig/results/run-17.json", "hil"),
+        )
+        for sequence, (adapter, source_uri, tier) in enumerate(cases, start=1):
+            with self.subTest(adapter=adapter):
+                envelope = create_development_signed_envelope(
+                    project_id="forge-robot-arm",
+                    tenant_id="tenant-local",
+                    evidence_id=f"edge-{sequence}",
+                    device_id="upper-arm-rig",
+                    rig_id="rig-a",
+                    run_id=f"run-{sequence}",
+                    tier=cast(EdgeTier, tier),
+                    adapter=cast(EdgeAdapter, adapter),
+                    source_uri=source_uri,
+                    captured_at=CAPTURED_AT,
+                    sequence=sequence,
+                    nonce=f"nonce-{sequence}",
+                    candidate_hash=HASH_A,
+                    firmware_hash=HASH_B,
+                    artifact_hash=HASH_C,
+                    payload={"result": "PASS"},
+                    verifier=verifier,
+                )
+                self.assertEqual(envelope.adapter, adapter)
+
+    def test_edge_adapter_rejects_unknown_or_mismatched_source_protocol(self) -> None:
+        verifier = DevelopmentHMACVerifier(secret="edge-secret")
+        for adapter, source_uri, tier in (
+            ("serial", "serial://robot.local/evidence", "bench"),
+            ("mqtt", "ros2://robot.local/evidence", "bench"),
+            ("hil_artifact", "file://hil/results.json", "bench"),
+        ):
+            with (
+                self.subTest(adapter=adapter, source_uri=source_uri),
+                self.assertRaises(ValueError),
+            ):
+                create_development_signed_envelope(
+                    project_id="forge-robot-arm",
+                    tenant_id="tenant-local",
+                    evidence_id="bad-adapter",
+                    device_id="upper-arm-rig",
+                    rig_id="rig-a",
+                    run_id="run-bad",
+                    tier=cast(EdgeTier, tier),
+                    adapter=cast(EdgeAdapter, adapter),
+                    source_uri=source_uri,
+                    captured_at=CAPTURED_AT,
+                    sequence=1,
+                    nonce="nonce-bad",
+                    candidate_hash=HASH_A,
+                    firmware_hash=HASH_B,
+                    artifact_hash=HASH_C,
+                    payload={"result": "PASS"},
+                    verifier=verifier,
+                )
+
 
 def _signed(
     *,
     sequence: int,
     nonce: str,
     verifier: DevelopmentHMACVerifier,
+    project_id: str = "forge-robot-arm",
+    tenant_id: str = "tenant-local",
 ) -> EdgeEvidenceEnvelope:
     return create_development_signed_envelope(
-        project_id="forge-robot-arm",
-        tenant_id="tenant-local",
+        project_id=project_id,
+        tenant_id=tenant_id,
         evidence_id=f"bench-run-{sequence}",
         device_id="upper-arm-rig",
         rig_id="bench-a",
@@ -199,7 +334,7 @@ def _signed(
         candidate_hash=HASH_A,
         firmware_hash=HASH_B,
         artifact_hash=HASH_C,
-        payload={"measured_voltage_v": 47.9},
+        payload={"measurement": {"temperature_c": 38.2, "voltage_v": 47.9}},
         verifier=verifier,
     )
 

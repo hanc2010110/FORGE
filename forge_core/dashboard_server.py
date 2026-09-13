@@ -26,6 +26,7 @@ def create_dashboard_server(
         service = ReleaseIntegrationService(
             store, ConnectorRegistry(), clock=lambda: datetime.now(UTC)
         )
+        service.process_pending_automatic_reverifications()
         config_dir = (
             github_config_dir
             if github_config_dir is not None

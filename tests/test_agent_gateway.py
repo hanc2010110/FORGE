@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -23,7 +24,10 @@ class ForgeAgentGatewayTests(unittest.TestCase):
             self.store, ConnectorRegistry(), clock=lambda: NOW
         )
         self.gateway = ForgeAgentGateway(
-            service, integration_hub=IntegrationHub(), installation_id="test-agent"
+            service,
+            integration_hub=IntegrationHub(),
+            installation_id="test-agent",
+            clock=lambda: NOW,
         )
 
     def tearDown(self) -> None:
@@ -40,7 +44,17 @@ class ForgeAgentGatewayTests(unittest.TestCase):
         self.assertFalse(confirm["annotations"]["readOnlyHint"])
         self.assertTrue(confirm["_meta"]["forge/approvalRequired"])
         self.assertIn("$defs", confirm["inputSchema"])
+        command_schema = confirm["inputSchema"]["properties"]["command"]
+        self.assertIn("approval_id", command_schema["required"])
+        self.assertIn("approval_nonce", command_schema["required"])
+        self.assertNotIn("forge_approve_design_candidate", by_name)
         self.assertNotIn("forge_run_conversation", by_name)
+        self.assertNotIn("forge_bind_simulation_result", by_name)
+        self.assertNotIn("forge_ingest_release_evidence", by_name)
+        self.assertNotIn("forge_evaluate_release", by_name)
+        self.assertTrue(
+            by_name["forge_inspect_cad_import"]["annotations"]["readOnlyHint"]
+        )
 
     def test_create_project_and_read_compact_context(self) -> None:
         created = self.gateway.call_tool(
@@ -86,6 +100,40 @@ class ForgeAgentGatewayTests(unittest.TestCase):
         self.assertEqual(states["llm_host_mcp"], "local_available")
         self.assertNotIn("nexar_octopart", states)
 
+    def test_read_only_step_inspection_is_available_to_llm_host(self) -> None:
+        self.gateway.call_tool(
+            "forge_create_project",
+            {
+                "request_id": "create-cad-project",
+                "command": {"project_id": "cad-project", "name": "CAD Project"},
+            },
+        )
+        step = b"""ISO-10303-21;
+HEADER;
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN_CC2'));
+ENDSEC;
+DATA;
+#1=PRODUCT('ARM','Arm','',(#2));
+#20=CARTESIAN_POINT('',(0.,0.,0.));
+#21=CARTESIAN_POINT('',(10.,20.,30.));
+ENDSEC;
+END-ISO-10303-21;
+"""
+        result = self.gateway.call_tool(
+            "forge_inspect_cad_import",
+            {
+                "project_id": "cad-project",
+                "asset_id": "arm-step",
+                "filename": "arm.step",
+                "source_uri": "attachment://arm.step",
+                "source_version": "upload-1",
+                "content_base64": base64.b64encode(step).decode("ascii"),
+            },
+        )
+        self.assertEqual(result["inspection"]["kind"], "step_summary")
+        self.assertFalse(result["persisted"])
+        self.assertFalse(result["release_evidence"])
+
     def test_invalid_tool_calls_fail_closed(self) -> None:
         with self.assertRaisesRegex(KeyError, "unknown FORGE tool"):
             self.gateway.call_tool("forge_execute_robot_command", {})
@@ -96,6 +144,13 @@ class ForgeAgentGatewayTests(unittest.TestCase):
                 "forge_create_project",
                 {"request_id": "bad", "command": {"project_id": "missing-name"}},
             )
+        for forbidden in (
+            "forge_bind_simulation_result",
+            "forge_ingest_release_evidence",
+            "forge_evaluate_release",
+        ):
+            with self.assertRaisesRegex(KeyError, "unknown FORGE tool"):
+                self.gateway.call_tool(forbidden, {})
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 import secrets
@@ -9,7 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     Field,
@@ -77,10 +78,15 @@ from forge_core.conversational_design import (
     build_simulation_binding,
 )
 from forge_core.conversational_persistence import (
+    DesignCandidateApprovalRequest,
     StoredDesignCandidate,
+    StoredDesignCandidateApproval,
+    StoredDesignCandidateApprovalReceipt,
     StoredDesignStateTransition,
     StoredEvidenceClaim,
     StoredSimulationBinding,
+    design_candidate_approval_hash,
+    design_candidate_approval_receipt_hash,
 )
 from forge_core.external_evidence_planning import (
     EXTERNAL_EVIDENCE_TIERS,
@@ -95,6 +101,10 @@ from forge_core.external_evidence_planning import (
 )
 from forge_core.hashing import canonical_sha256
 from forge_core.impact_engine import analyze_change, connector_snapshot_hash
+from forge_core.iteration_workflow import (
+    DeterministicReleaseOutcome,
+    next_step_for_release_outcome,
+)
 from forge_core.local_rag import (
     DeterministicLexicalRetriever,
     LocalExtractiveProvider,
@@ -127,6 +137,9 @@ from forge_core.preview_engine import (
 )
 from forge_core.release_persistence import (
     RawReleaseEvidence,
+    StoredAutomaticReverificationFailure,
+    StoredAutomaticReverificationReceipt,
+    StoredAutomaticReverificationTrigger,
     StoredChangeImpactAssessment,
     StoredConnectorSnapshot,
     StoredRawReleaseEvidence,
@@ -443,13 +456,64 @@ class VerifyExternalEvidencePlanCommand(ContractModel):
         return value
 
 
+class AutomaticReverificationApproval(ContractModel):
+    approval_id: str = Field(min_length=1, max_length=128)
+    analysis_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    candidate_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    preview_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    plan_verification_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    evidence_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    approved_by: str = Field(min_length=1, max_length=128)
+    approved_at: datetime
+
+    @field_validator("approval_id", "approved_by")
+    @classmethod
+    def approval_ids_must_be_safe(cls, value: str) -> str:
+        if _SAFE_ID.fullmatch(value) is None:
+            raise ValueError(
+                "automatic reverification approval identifiers must be safe"
+            )
+        return value
+
+    @field_validator("approved_at")
+    @classmethod
+    def approved_at_must_be_utc(cls, value: datetime) -> datetime:
+        offset = value.utcoffset()
+        if value.tzinfo is None or offset is None:
+            raise ValueError("automatic reverification approval time must be UTC")
+        if offset.total_seconds() != 0:
+            raise ValueError("automatic reverification approval time must be UTC")
+        return value
+
+
 class IngestReleaseEvidenceCommand(ContractModel):
     analysis_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     evidence: RawReleaseEvidence
+    automatic_reverification: AutomaticReverificationApproval | None = None
+
+    @model_validator(mode="after")
+    def automatic_reverification_must_bind_exact_evidence(
+        self,
+    ) -> IngestReleaseEvidenceCommand:
+        approval = self.automatic_reverification
+        if approval is None:
+            return self
+        if approval.analysis_hash != self.analysis_hash:
+            raise ValueError(
+                "automatic reverification approval analysis does not match"
+            )
+        if approval.evidence_hash != canonical_sha256(self.evidence):
+            raise ValueError(
+                "automatic reverification approval evidence does not match"
+            )
+        return self
 
 
 class EvaluateReleaseCommand(ContractModel):
     analysis_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    automatic_trigger_hash: str | None = Field(
+        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
 
 
 class CreateDesignProposalCommand(ContractModel):
@@ -459,7 +523,27 @@ class CreateDesignProposalCommand(ContractModel):
     preview_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
+class ApproveDesignCandidateCommand(ContractModel):
+    approval_id: str = Field(min_length=1)
+    approval_nonce: str = Field(min_length=32, max_length=256)
+    session_id: str = Field(default="session-1", min_length=1)
+    candidate_id: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    proposal_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    parameters: tuple[DesignParameter, ...] = Field(min_length=1)
+    requirements: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("approval_id", "session_id", "candidate_id")
+    @classmethod
+    def approval_and_candidate_ids_must_be_safe(cls, value: str) -> str:
+        if _SAFE_ID.fullmatch(value) is None:
+            raise ValueError("approval and candidate IDs must be opaque and safe")
+        return value
+
+
 class ConfirmDesignCandidateCommand(ContractModel):
+    approval_id: str = Field(min_length=1)
+    approval_nonce: str = Field(min_length=32, max_length=256)
     session_id: str = Field(default="session-1", min_length=1)
     candidate_id: str = Field(min_length=1)
     revision: int = Field(ge=1)
@@ -468,7 +552,7 @@ class ConfirmDesignCandidateCommand(ContractModel):
     requirements: tuple[str, ...] = Field(min_length=1)
     confirmed_by: str = Field(min_length=1)
 
-    @field_validator("session_id", "candidate_id")
+    @field_validator("approval_id", "session_id", "candidate_id")
     @classmethod
     def candidate_id_must_be_safe(cls, value: str) -> str:
         if _SAFE_ID.fullmatch(value) is None:
@@ -561,6 +645,10 @@ def _canonical_json(value: object) -> str:
     )
 
 
+def _nonce_hash(value: str) -> str:
+    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
+
+
 def _component_key(item: ComponentSpecification | None) -> tuple[str, str, str]:
     if item is None:
         return ("", "", "")
@@ -598,6 +686,7 @@ class ReleaseIntegrationService:
             "analyze_change": Permission.CREATE_PLAN,
             "create_change_preview": Permission.CREATE_PLAN,
             "create_design_proposal": Permission.CREATE_PLAN,
+            "approve_design_candidate": Permission.ACCEPT_DESIGN,
             "confirm_design_candidate": Permission.ACCEPT_DESIGN,
             "bind_design_simulation": Permission.MUTATE_EVIDENCE,
             "record_conversational_claim": Permission.MUTATE_EVIDENCE,
@@ -1233,6 +1322,64 @@ class ReleaseIntegrationService:
             "create_design_proposal", project_id, command, context, build
         )
 
+    def approve_design_candidate(
+        self,
+        project_id: str,
+        command: ApproveDesignCandidateCommand,
+        context: MutationContext,
+    ) -> ServiceMutationResult:
+        """Record the authenticated user's approval without persisting the nonce."""
+
+        def build(
+            now: datetime, _next_version: int
+        ) -> tuple[dict[str, Any], Callable[[AtomicProjectWrite], None]]:
+            proposal = self._store.get_design_proposal(command.proposal_hash)
+            if proposal.project_id != project_id:
+                raise ValueError("design candidate proposal belongs to another project")
+            request = DesignCandidateApprovalRequest(
+                project_id=project_id,
+                session_id=command.session_id,
+                candidate_id=command.candidate_id,
+                revision=command.revision,
+                proposal_hash=command.proposal_hash,
+                parameters=command.parameters,
+                requirements=command.requirements,
+                confirmed_by=context.actor_id,
+            )
+            request_hash = canonical_sha256(request)
+            nonce_hash = _nonce_hash(command.approval_nonce)
+            approval = StoredDesignCandidateApproval(
+                approval_id=command.approval_id,
+                approval_hash=design_candidate_approval_hash(
+                    approval_id=command.approval_id,
+                    project_id=project_id,
+                    request_hash=request_hash,
+                    nonce_hash=nonce_hash,
+                    approved_by=context.actor_id,
+                    approved_at=now,
+                ),
+                project_id=project_id,
+                request_hash=request_hash,
+                nonce_hash=nonce_hash,
+                approved_by=context.actor_id,
+                request=request,
+                approved_at=now,
+                stored_at=now,
+            )
+            return (
+                {
+                    "design_candidate_approval": {
+                        **approval.model_dump(mode="json"),
+                        "nonce_hash": "<redacted>",
+                    }
+                },
+                lambda atomic: atomic.insert_design_candidate_approval(approval),
+            )
+
+        return self._mutation(
+            "approve_design_candidate", project_id, command, context, build
+        )
+
     def confirm_design_candidate(
         self,
         project_id: str,
@@ -1242,9 +1389,47 @@ class ReleaseIntegrationService:
         def build(
             now: datetime, _next_version: int
         ) -> tuple[dict[str, Any], Callable[[AtomicProjectWrite], None]]:
+            if command.confirmed_by != context.actor_id:
+                raise AuthorizationDeniedError(
+                    "design candidate confirmer must match authenticated actor"
+                )
             proposal = self._store.get_design_proposal(command.proposal_hash)
             if proposal.project_id != project_id:
                 raise ValueError("design candidate proposal belongs to another project")
+            approval = self._store.get_design_candidate_approval(command.approval_id)
+            expected_request = DesignCandidateApprovalRequest(
+                project_id=project_id,
+                session_id=command.session_id,
+                candidate_id=command.candidate_id,
+                revision=command.revision,
+                proposal_hash=command.proposal_hash,
+                parameters=command.parameters,
+                requirements=command.requirements,
+                confirmed_by=context.actor_id,
+            )
+            if (
+                approval.project_id != project_id
+                or approval.approved_by != context.actor_id
+                or approval.request != expected_request
+                or approval.request_hash != canonical_sha256(expected_request)
+            ):
+                raise AuthorizationDeniedError(
+                    "design candidate approval does not cover this exact request"
+                )
+            if not secrets.compare_digest(
+                approval.nonce_hash, _nonce_hash(command.approval_nonce)
+            ):
+                raise AuthorizationDeniedError(
+                    "design candidate approval nonce is invalid"
+                )
+            try:
+                self._store.get_design_candidate_approval_receipt(approval.approval_id)
+            except RecordNotFoundError:
+                pass
+            else:
+                raise AuthorizationDeniedError(
+                    "design candidate approval has already been consumed"
+                )
             candidate = build_design_candidate(
                 project_id=project_id,
                 candidate_id=command.candidate_id,
@@ -1253,7 +1438,7 @@ class ReleaseIntegrationService:
                 proposal_hash=proposal.proposal_hash,
                 parameters=command.parameters,
                 requirements=command.requirements,
-                confirmed_by=command.confirmed_by,
+                confirmed_by=context.actor_id,
                 confirmed_at=now,
             )
             record = StoredDesignCandidate(
@@ -1266,9 +1451,32 @@ class ReleaseIntegrationService:
                 candidate=candidate,
                 stored_at=now,
             )
+            receipt = StoredDesignCandidateApprovalReceipt(
+                receipt_hash=design_candidate_approval_receipt_hash(
+                    approval_id=approval.approval_id,
+                    approval_hash=approval.approval_hash,
+                    project_id=project_id,
+                    request_hash=approval.request_hash,
+                    candidate_hash=candidate.candidate_hash,
+                    consumed_by=context.actor_id,
+                    consumed_at=now,
+                ),
+                approval_id=approval.approval_id,
+                approval_hash=approval.approval_hash,
+                project_id=project_id,
+                request_hash=approval.request_hash,
+                candidate_hash=candidate.candidate_hash,
+                consumed_by=context.actor_id,
+                consumed_at=now,
+            )
             return (
-                {"design_candidate": record.model_dump(mode="json")},
-                lambda atomic: atomic.insert_design_candidate(record),
+                {
+                    "design_candidate": record.model_dump(mode="json"),
+                    "approval_receipt": receipt.model_dump(mode="json"),
+                },
+                lambda atomic: atomic.consume_design_candidate_approval(
+                    record, receipt
+                ),
             )
 
         return self._mutation(
@@ -1863,6 +2071,26 @@ class ReleaseIntegrationService:
         command: IngestReleaseEvidenceCommand,
         context: MutationContext,
     ) -> ServiceMutationResult:
+        approval = command.automatic_reverification
+        if approval is not None:
+            if approval.approved_by != context.actor_id:
+                raise ValueError(
+                    "automatic reverification approval actor does not match"
+                )
+            if approval.approved_at > self._clock():
+                raise ValueError(
+                    "automatic reverification approval cannot be from the future"
+                )
+            self._authorize(
+                project_id=project_id,
+                org_id=context.org_id,
+                actor_id=context.actor_id,
+                permission=Permission.DECIDE_RELEASE,
+                event_id=f"audit:{secrets.token_hex(24)}",
+                occurred_at=self._clock(),
+                persist=False,
+            )
+
         def build(
             now: datetime, _next_version: int
         ) -> tuple[dict[str, Any], Callable[[AtomicProjectWrite], None]]:
@@ -1897,14 +2125,224 @@ class ReleaseIntegrationService:
                 evidence=evidence,
                 stored_at=now,
             )
+            approval = command.automatic_reverification
+            trigger: StoredAutomaticReverificationTrigger | None = None
+            if approval is not None:
+                self._require_automatic_reverification_lineage(project_id, approval)
+                draft = StoredAutomaticReverificationTrigger.model_construct(
+                    trigger_hash="sha256:" + "0" * 64,
+                    project_id=project_id,
+                    analysis_hash=approval.analysis_hash,
+                    candidate_hash=approval.candidate_hash,
+                    preview_hash=approval.preview_hash,
+                    plan_verification_hash=approval.plan_verification_hash,
+                    evidence_hash=approval.evidence_hash,
+                    approval_id=approval.approval_id,
+                    approved_by=approval.approved_by,
+                    approved_at=approval.approved_at,
+                    local_installation_id=context.local_installation_id,
+                    org_id=context.org_id,
+                    actor_id=context.actor_id,
+                    created_at=now,
+                )
+                trigger = StoredAutomaticReverificationTrigger.model_validate(
+                    draft.model_copy(
+                        update={"trigger_hash": canonical_sha256(draft)}
+                    ).model_dump(mode="python")
+                )
+
+            def apply(atomic: AtomicProjectWrite) -> None:
+                atomic.insert_release_evidence(record)
+                if trigger is not None:
+                    atomic.insert_automatic_reverification_trigger(trigger)
+
+            payload: dict[str, Any] = {
+                "release_evidence": record.model_dump(mode="json")
+            }
+            if trigger is not None:
+                payload["automatic_reverification_trigger"] = trigger.model_dump(
+                    mode="json"
+                )
             return (
-                {"release_evidence": record.model_dump(mode="json")},
-                lambda atomic: atomic.insert_release_evidence(record),
+                payload,
+                apply,
             )
 
-        return self._mutation(
+        ingested = self._mutation(
             "ingest_release_evidence", project_id, command, context, build
         )
+        if approval is None:
+            return ingested
+        trigger = StoredAutomaticReverificationTrigger.model_validate(
+            ingested.payload["automatic_reverification_trigger"]
+        )
+        evaluation = self._process_automatic_reverification_trigger(trigger)
+        stored_decision = evaluation.payload["release_decision"]
+        decision = stored_decision["decision"]
+        status_value = str(decision["report"]["status"])
+        outcome_status: Literal["READY", "BLOCKED"]
+        if status_value == ReleaseStatus.READY.value:
+            outcome_status = "READY"
+        elif status_value == ReleaseStatus.BLOCKED.value:
+            outcome_status = "BLOCKED"
+        else:
+            raise RuntimeError("release evaluator returned an impossible status")
+        outcome = DeterministicReleaseOutcome(
+            status=outcome_status,
+            decision_hash=str(stored_decision["decision_hash"]),
+        )
+        next_step = next_step_for_release_outcome(outcome)
+        payload = dict(ingested.payload) | {
+            "automatic_reverification": {
+                "approval_id": approval.approval_id,
+                "candidate_hash": approval.candidate_hash,
+                "preview_hash": approval.preview_hash,
+                "plan_verification_hash": approval.plan_verification_hash,
+                "evidence_hash": approval.evidence_hash,
+                "release_status": outcome.status,
+                "release_decision_hash": outcome.decision_hash,
+                "trigger_hash": trigger.trigger_hash,
+                "receipt_hash": evaluation.payload["automatic_reverification_receipt"][
+                    "receipt_hash"
+                ],
+                "next_step": next_step.model_dump(mode="json"),
+            },
+            "project_version": evaluation.project_version,
+        }
+        return ServiceMutationResult(
+            status=201,
+            payload=payload,
+            response_json=_canonical_json(payload),
+            project_version=evaluation.project_version,
+            replayed=ingested.replayed and evaluation.replayed,
+        )
+
+    def _process_automatic_reverification_trigger(
+        self, trigger: StoredAutomaticReverificationTrigger
+    ) -> ServiceMutationResult:
+        try:
+            receipt = self._store.get_automatic_reverification_receipt(
+                trigger.trigger_hash
+            )
+        except RecordNotFoundError:
+            receipt = None
+        if receipt is not None:
+            decision = self._store.get_release_decision(receipt.decision_hash)
+            project_version = self._store.get_project(trigger.project_id).version
+            payload = {
+                "release_decision": decision.model_dump(mode="json"),
+                "automatic_reverification_receipt": receipt.model_dump(mode="json"),
+                "project_version": project_version,
+            }
+            return ServiceMutationResult(
+                status=201,
+                payload=payload,
+                response_json=_canonical_json(payload),
+                project_version=project_version,
+                replayed=True,
+            )
+
+        auto_key = "auto-reverify-" + trigger.trigger_hash.removeprefix("sha256:")[:48]
+        for attempt in range(3):
+            project_version = self._store.get_project(trigger.project_id).version
+            try:
+                return self.evaluate_release(
+                    trigger.project_id,
+                    EvaluateReleaseCommand(
+                        analysis_hash=trigger.analysis_hash,
+                        automatic_trigger_hash=trigger.trigger_hash,
+                    ),
+                    MutationContext(
+                        local_installation_id=trigger.local_installation_id,
+                        idempotency_key=auto_key,
+                        expected_project_version=project_version,
+                        org_id=trigger.org_id,
+                        actor_id=trigger.actor_id,
+                    ),
+                )
+            except VersionConflictError:
+                try:
+                    receipt = self._store.get_automatic_reverification_receipt(
+                        trigger.trigger_hash
+                    )
+                except RecordNotFoundError:
+                    if attempt == 2:
+                        raise
+                    continue
+                return self._process_automatic_reverification_trigger(trigger)
+        raise RuntimeError("automatic reverification retry loop exhausted")
+
+    def _require_automatic_reverification_lineage(
+        self, project_id: str, approval: AutomaticReverificationApproval
+    ) -> None:
+        candidate = self._store.get_design_candidate(approval.candidate_hash)
+        proposal = self._store.get_design_proposal(candidate.proposal_hash)
+        verification = self._store.get_plan_verification(
+            approval.plan_verification_hash
+        )
+        if (
+            candidate.project_id != project_id
+            or proposal.project_id != project_id
+            or verification.project_id != project_id
+        ):
+            raise ValueError(
+                "automatic reverification lineage belongs to another project"
+            )
+        if (
+            proposal.preview_hash != approval.preview_hash
+            or verification.preview_hash != approval.preview_hash
+            or verification.actual_change_analysis_hash != approval.analysis_hash
+        ):
+            raise ValueError(
+                "automatic reverification approval does not bind candidate, "
+                "preview, and analysis"
+            )
+        if not verification.verification.matches_plan:
+            raise ValueError(
+                "automatic reverification requires a successful plan verification"
+            )
+        if (
+            candidate.candidate.confirmed_at > approval.approved_at
+            or verification.verification.verified_at > approval.approved_at
+        ):
+            raise ValueError(
+                "automatic reverification approval predates its verified design lineage"
+            )
+
+    def process_pending_automatic_reverifications(
+        self, project_id: str | None = None
+    ) -> tuple[ServiceMutationResult, ...]:
+        completed: list[ServiceMutationResult] = []
+        for trigger in self._store.list_pending_automatic_reverification_triggers(
+            project_id
+        ):
+            try:
+                completed.append(
+                    self._process_automatic_reverification_trigger(trigger)
+                )
+            except Exception:
+                failures = tuple(
+                    item
+                    for item in self._store.list_automatic_reverification_failures(
+                        trigger.project_id
+                    )
+                    if item.trigger_hash == trigger.trigger_hash
+                )
+                draft = StoredAutomaticReverificationFailure.model_construct(
+                    failure_hash="sha256:" + "0" * 64,
+                    trigger_hash=trigger.trigger_hash,
+                    project_id=trigger.project_id,
+                    attempt=len(failures) + 1,
+                    error_code="automatic_reverification_failed",
+                    failed_at=self._clock(),
+                )
+                failure = StoredAutomaticReverificationFailure.model_validate(
+                    draft.model_copy(
+                        update={"failure_hash": canonical_sha256(draft)}
+                    ).model_dump(mode="python")
+                )
+                self._store.append_automatic_reverification_failure(failure)
+        return tuple(completed)
 
     def evaluate_release(
         self,
@@ -1918,6 +2356,29 @@ class ReleaseIntegrationService:
             assessment = self._store.get_change_assessment(command.analysis_hash)
             if assessment.project_id != project_id:
                 raise ValueError("release assessment belongs to another project")
+            trigger: StoredAutomaticReverificationTrigger | None = None
+            if command.automatic_trigger_hash is not None:
+                trigger = self._store.get_automatic_reverification_trigger(
+                    command.automatic_trigger_hash
+                )
+                if (
+                    trigger.project_id != project_id
+                    or trigger.analysis_hash != command.analysis_hash
+                ):
+                    raise ValueError(
+                        "automatic reverification trigger targets another release"
+                    )
+                approval = AutomaticReverificationApproval(
+                    approval_id=trigger.approval_id,
+                    analysis_hash=trigger.analysis_hash,
+                    candidate_hash=trigger.candidate_hash,
+                    preview_hash=trigger.preview_hash,
+                    plan_verification_hash=trigger.plan_verification_hash,
+                    evidence_hash=trigger.evidence_hash,
+                    approved_by=trigger.approved_by,
+                    approved_at=trigger.approved_at,
+                )
+                self._require_automatic_reverification_lineage(project_id, approval)
             snapshot = self._store.get_connector_snapshot(
                 project_id, assessment.to_snapshot_id
             )
@@ -1983,9 +2444,46 @@ class ReleaseIntegrationService:
                 decision=decision,
                 stored_at=now,
             )
+            receipt: StoredAutomaticReverificationReceipt | None = None
+            if trigger is not None:
+                receipt_status: Literal["READY", "BLOCKED"] = (
+                    "READY"
+                    if decision.report.status is ReleaseStatus.READY
+                    else "BLOCKED"
+                )
+                receipt_draft = StoredAutomaticReverificationReceipt.model_construct(
+                    receipt_hash="sha256:" + "0" * 64,
+                    trigger_hash=trigger.trigger_hash,
+                    project_id=project_id,
+                    analysis_hash=trigger.analysis_hash,
+                    candidate_hash=trigger.candidate_hash,
+                    preview_hash=trigger.preview_hash,
+                    plan_verification_hash=trigger.plan_verification_hash,
+                    decision_hash=record.decision_hash,
+                    release_status=receipt_status,
+                    completed_at=now,
+                )
+                receipt = StoredAutomaticReverificationReceipt.model_validate(
+                    receipt_draft.model_copy(
+                        update={"receipt_hash": canonical_sha256(receipt_draft)}
+                    ).model_dump(mode="python")
+                )
+
+            def apply(atomic: AtomicProjectWrite) -> None:
+                atomic.append_release_decision(record)
+                if receipt is not None:
+                    atomic.insert_automatic_reverification_receipt(receipt)
+
+            payload: dict[str, Any] = {
+                "release_decision": record.model_dump(mode="json")
+            }
+            if receipt is not None:
+                payload["automatic_reverification_receipt"] = receipt.model_dump(
+                    mode="json"
+                )
             return (
-                {"release_decision": record.model_dump(mode="json")},
-                lambda atomic: atomic.append_release_decision(record),
+                payload,
+                apply,
             )
 
         return self._mutation("evaluate_release", project_id, command, context, build)
@@ -2251,11 +2749,23 @@ class ReleaseIntegrationService:
         ]
 
     def operational_health(self) -> dict[str, Any]:
-        return (
+        report = (
             SQLiteOperationsService(self._store.path)
             .health(checked_at=self._clock())
             .model_dump(mode="json")
         )
+        pending = self._store.list_pending_automatic_reverification_triggers()
+        pending_hashes = {item.trigger_hash for item in pending}
+        failures = tuple(
+            item
+            for item in self._store.list_automatic_reverification_failures()
+            if item.trigger_hash in pending_hashes
+        )
+        report["pending_automatic_reverifications"] = len(pending)
+        report["automatic_reverification_failures"] = len(failures)
+        if report["status"] == "READY" and (pending or failures):
+            report["status"] = "DEGRADED"
+        return report
 
     def list_knowledge_sources(self, project_id: str) -> list[dict[str, Any]]:
         return [
@@ -2484,6 +2994,7 @@ class ReleaseIntegrationService:
 
 __all__ = [
     "AnalyzeChangeCommand",
+    "AutomaticReverificationApproval",
     "AppendDesignTransitionCommand",
     "BindDesignSimulationCommand",
     "CaptureSnapshotCommand",

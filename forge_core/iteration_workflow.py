@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Literal
+from threading import Lock
+from typing import Literal, Protocol
 
 from pydantic import Field, field_validator, model_validator
 
+from forge_core.conversational_design import DesignConversationState
 from forge_core.hashing import canonical_sha256
 from forge_core.models import ContractModel
 
 EvidenceTierName = str
 HashValue = str
+_CANONICAL_HASH = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _utc(value: datetime, name: str) -> datetime:
@@ -27,14 +32,6 @@ def _unique_tuple(value: tuple[str, ...], name: str) -> tuple[str, ...]:
 
 class IterationTransitionError(ValueError):
     """Raised when an approved engineering iteration would be replayed or forged."""
-
-
-class IterationPhase(StrEnum):
-    TALK = "talk"
-    CONFIRM = "confirm"
-    SIMULATE = "simulate"
-    REVISE = "revise"
-    VERIFY = "verify"
 
 
 class IterationDecision(StrEnum):
@@ -98,54 +95,6 @@ class SimulationExecutionDirective(ContractModel):
         return _unique_tuple(value, "expected result kinds")
 
 
-class IterationEvent(ContractModel):
-    project_id: str = Field(min_length=1)
-    candidate_hash: HashValue = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    sequence: int = Field(ge=1)
-    from_phase: IterationPhase
-    to_phase: IterationPhase
-    reason: str = Field(min_length=1, max_length=400)
-    observed_at: datetime
-    previous_event_hash: HashValue | None = Field(
-        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
-    )
-    approval_hash: HashValue | None = Field(
-        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
-    )
-    simulation_request_hash: HashValue | None = Field(
-        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
-    )
-    evidence_hashes: tuple[HashValue, ...] = ()
-
-    @field_validator("observed_at")
-    @classmethod
-    def observed_at_must_be_utc(cls, value: datetime) -> datetime:
-        return _utc(value, "observed_at")
-
-    @field_validator("evidence_hashes")
-    @classmethod
-    def evidence_hashes_must_be_unique(
-        cls, value: tuple[HashValue, ...]
-    ) -> tuple[HashValue, ...]:
-        return _unique_tuple(value, "evidence hashes")
-
-    @model_validator(mode="after")
-    def transition_must_be_ordered(self) -> IterationEvent:
-        allowed = {
-            (IterationPhase.TALK, IterationPhase.CONFIRM),
-            (IterationPhase.CONFIRM, IterationPhase.SIMULATE),
-            (IterationPhase.SIMULATE, IterationPhase.REVISE),
-            (IterationPhase.REVISE, IterationPhase.SIMULATE),
-            (IterationPhase.SIMULATE, IterationPhase.VERIFY),
-            (IterationPhase.VERIFY, IterationPhase.REVISE),
-        }
-        if (self.from_phase, self.to_phase) not in allowed:
-            raise ValueError("iteration phase transition is not allowed")
-        if self.sequence == 1 and self.previous_event_hash is not None:
-            raise ValueError("first iteration event cannot reference previous hash")
-        return self
-
-
 class LLMIterationRecommendation(ContractModel):
     project_id: str = Field(min_length=1)
     candidate_hash: HashValue = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -203,8 +152,184 @@ class IterationEvidenceState(ContractModel):
 class IterationNextStep(ContractModel):
     decision: IterationDecision
     required_actions: tuple[str, ...]
-    next_phase: IterationPhase
+    next_state: DesignConversationState
     release_authority: str = "forge_policy_only"
+
+
+class AutomaticReverificationResult(ContractModel):
+    next_step: IterationNextStep
+    verification_invoked: bool
+    evaluated_evidence_hash: HashValue | None = Field(
+        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+    release_decision_hash: HashValue | None = Field(
+        default=None, pattern=r"^sha256:[0-9a-f]{64}$"
+    )
+    release_status: Literal["READY", "BLOCKED"] | None = None
+
+    @model_validator(mode="after")
+    def invocation_fields_must_be_coherent(self) -> AutomaticReverificationResult:
+        has_outcome = (
+            self.evaluated_evidence_hash is not None
+            and self.release_decision_hash is not None
+            and self.release_status is not None
+        )
+        if self.verification_invoked != has_outcome:
+            raise ValueError("automatic reverification result is inconsistent")
+        return self
+
+
+class DeterministicReleaseOutcome(ContractModel):
+    status: Literal["READY", "BLOCKED"]
+    decision_hash: HashValue = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+def next_step_for_release_outcome(
+    outcome: DeterministicReleaseOutcome,
+) -> IterationNextStep:
+    if outcome.status == "READY":
+        return IterationNextStep(
+            decision=IterationDecision.VERIFY_RELEASE,
+            required_actions=("release evidence is READY under FORGE policy",),
+            next_state=DesignConversationState.ACCEPTED,
+        )
+    return IterationNextStep(
+        decision=IterationDecision.REVISE_AND_RESIMULATE,
+        required_actions=(
+            "inspect deterministic BLOCKED reasons, revise, and collect new evidence",
+        ),
+        next_state=DesignConversationState.REVISED,
+    )
+
+
+class IterationCheckpointStore(Protocol):
+    """Atomic replay boundary for evidence-triggered release verification."""
+
+    def last_evaluated_hash(
+        self, *, project_id: str, candidate_hash: str
+    ) -> str | None: ...
+
+    def verify_once(
+        self,
+        *,
+        project_id: str,
+        candidate_hash: str,
+        evidence_hash: str,
+        evaluator: Callable[[], DeterministicReleaseOutcome],
+    ) -> tuple[bool, DeterministicReleaseOutcome | None]: ...
+
+
+class InMemoryIterationCheckpointStore:
+    """Thread-safe development store; production can inject durable persistence."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._evaluated: dict[tuple[str, str, str], DeterministicReleaseOutcome] = {}
+        self._latest: dict[tuple[str, str], str] = {}
+
+    def last_evaluated_hash(
+        self, *, project_id: str, candidate_hash: str
+    ) -> str | None:
+        with self._lock:
+            return self._latest.get((project_id, candidate_hash))
+
+    def verify_once(
+        self,
+        *,
+        project_id: str,
+        candidate_hash: str,
+        evidence_hash: str,
+        evaluator: Callable[[], DeterministicReleaseOutcome],
+    ) -> tuple[bool, DeterministicReleaseOutcome | None]:
+        key = (project_id, candidate_hash, evidence_hash)
+        with self._lock:
+            checkpoint = self._evaluated.get(key)
+            if checkpoint is not None:
+                self._latest[(project_id, candidate_hash)] = evidence_hash
+                return False, checkpoint
+            outcome = evaluator()
+            if _CANONICAL_HASH.fullmatch(outcome.decision_hash) is None:
+                raise IterationTransitionError(
+                    "release verifier returned a non-canonical decision hash"
+                )
+            self._evaluated[key] = outcome
+            self._latest[(project_id, candidate_hash)] = evidence_hash
+            return True, outcome
+
+
+class ApprovedIterationOrchestrator:
+    """Routes newly recorded evidence to deterministic verification when approved."""
+
+    def __init__(
+        self,
+        *,
+        checkpoint_store: IterationCheckpointStore,
+        verify_release: Callable[[str, str, str], DeterministicReleaseOutcome],
+    ) -> None:
+        self._checkpoint_store = checkpoint_store
+        self._verify_release = verify_release
+
+    def on_evidence_recorded(
+        self, state: IterationEvidenceState
+    ) -> AutomaticReverificationResult:
+        stored_hash = self._checkpoint_store.last_evaluated_hash(
+            project_id=state.project_id,
+            candidate_hash=state.candidate_hash,
+        )
+        if (
+            stored_hash is not None
+            and state.last_evaluated_evidence_hash is not None
+            and stored_hash != state.last_evaluated_evidence_hash
+        ):
+            raise IterationTransitionError(
+                "persisted and supplied iteration checkpoints do not match"
+            )
+        effective_state = state.model_copy(
+            update={
+                "last_evaluated_evidence_hash": stored_hash
+                or state.last_evaluated_evidence_hash
+            }
+        )
+        next_step = decide_next_iteration(effective_state)
+        if next_step.decision is not IterationDecision.VERIFY_RELEASE:
+            return AutomaticReverificationResult(
+                next_step=next_step,
+                verification_invoked=False,
+            )
+        evidence_hash = state.latest_evidence_hash
+        if evidence_hash is None:
+            raise IterationTransitionError(
+                "automatic reverification requires a recorded evidence hash"
+            )
+        invoked, outcome = self._checkpoint_store.verify_once(
+            project_id=state.project_id,
+            candidate_hash=state.candidate_hash,
+            evidence_hash=evidence_hash,
+            evaluator=lambda: self._verify_release(
+                state.project_id, state.candidate_hash, evidence_hash
+            ),
+        )
+        if not invoked:
+            return AutomaticReverificationResult(
+                next_step=IterationNextStep(
+                    decision=IterationDecision.WAIT_FOR_NEW_EVIDENCE,
+                    required_actions=(
+                        "wait for new evidence before reevaluating this candidate",
+                    ),
+                    next_state=DesignConversationState.SIMULATED,
+                ),
+                verification_invoked=False,
+            )
+        if outcome is None:
+            raise IterationTransitionError("release verifier returned no outcome")
+        verified_step = next_step_for_release_outcome(outcome)
+        return AutomaticReverificationResult(
+            next_step=verified_step,
+            verification_invoked=True,
+            evaluated_evidence_hash=evidence_hash,
+            release_decision_hash=outcome.decision_hash,
+            release_status=outcome.status,
+        )
 
 
 def simulation_request_hash(request: SimulationRequest) -> str:
@@ -213,10 +338,6 @@ def simulation_request_hash(request: SimulationRequest) -> str:
 
 def simulation_approval_hash(approval: CandidateSimulationApproval) -> str:
     return canonical_sha256(approval)
-
-
-def iteration_event_hash(event: IterationEvent) -> str:
-    return canonical_sha256(event)
 
 
 def authorize_simulation_request(
@@ -239,31 +360,6 @@ def authorize_simulation_request(
     )
 
 
-def append_iteration_event(
-    history: tuple[IterationEvent, ...], event: IterationEvent
-) -> tuple[IterationEvent, ...]:
-    if not history:
-        if event.sequence != 1:
-            raise IterationTransitionError("first iteration event must be sequence 1")
-        if event.previous_event_hash is not None:
-            raise IterationTransitionError("first iteration event cannot be chained")
-        return (event,)
-
-    previous = history[-1]
-    if event.project_id != previous.project_id:
-        raise IterationTransitionError("iteration event project changed")
-    if event.candidate_hash != previous.candidate_hash:
-        raise IterationTransitionError("iteration event candidate changed")
-    if event.sequence != previous.sequence + 1:
-        raise IterationTransitionError("iteration event sequence must be contiguous")
-    if event.previous_event_hash != iteration_event_hash(previous):
-        raise IterationTransitionError("iteration event previous hash mismatch")
-    event_hash = iteration_event_hash(event)
-    if any(iteration_event_hash(item) == event_hash for item in history):
-        raise IterationTransitionError("iteration event replay detected")
-    return (*history, event)
-
-
 def decide_next_iteration(state: IterationEvidenceState) -> IterationNextStep:
     if (
         state.latest_evidence_hash is not None
@@ -274,7 +370,7 @@ def decide_next_iteration(state: IterationEvidenceState) -> IterationNextStep:
             required_actions=(
                 "wait for new evidence before reevaluating this candidate",
             ),
-            next_phase=IterationPhase.SIMULATE,
+            next_state=DesignConversationState.SIMULATED,
         )
     if state.missing_required_tiers:
         return IterationNextStep(
@@ -283,7 +379,7 @@ def decide_next_iteration(state: IterationEvidenceState) -> IterationNextStep:
                 f"collect {tier} evidence for candidate {state.candidate_hash}"
                 for tier in state.missing_required_tiers
             ),
-            next_phase=IterationPhase.SIMULATE,
+            next_state=DesignConversationState.CONFIRMED,
         )
     if state.failing_required_tiers:
         return IterationNextStep(
@@ -292,7 +388,7 @@ def decide_next_iteration(state: IterationEvidenceState) -> IterationNextStep:
                 f"revise design and rerun {tier} evidence"
                 for tier in state.failing_required_tiers
             ),
-            next_phase=IterationPhase.REVISE,
+            next_state=DesignConversationState.REVISED,
         )
     if not state.user_confirmed_release:
         return IterationNextStep(
@@ -300,30 +396,32 @@ def decide_next_iteration(state: IterationEvidenceState) -> IterationNextStep:
             required_actions=(
                 "explain source-bound results and ask user whether to verify release",
             ),
-            next_phase=IterationPhase.CONFIRM,
+            next_state=DesignConversationState.SIMULATED,
         )
     return IterationNextStep(
         decision=IterationDecision.VERIFY_RELEASE,
         required_actions=("call deterministic FORGE release verification",),
-        next_phase=IterationPhase.VERIFY,
+        next_state=DesignConversationState.ACCEPTED,
     )
 
 
 __all__ = [
+    "ApprovedIterationOrchestrator",
+    "AutomaticReverificationResult",
     "CandidateSimulationApproval",
-    "IterationEvent",
+    "DeterministicReleaseOutcome",
+    "InMemoryIterationCheckpointStore",
+    "IterationCheckpointStore",
     "IterationDecision",
     "IterationEvidenceState",
     "IterationNextStep",
-    "IterationPhase",
     "IterationTransitionError",
     "LLMIterationRecommendation",
     "SimulationExecutionDirective",
     "SimulationRequest",
-    "append_iteration_event",
     "authorize_simulation_request",
     "decide_next_iteration",
-    "iteration_event_hash",
+    "next_step_for_release_outcome",
     "simulation_approval_hash",
     "simulation_request_hash",
 ]

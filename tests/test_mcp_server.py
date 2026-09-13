@@ -42,7 +42,9 @@ class MCPServerTests(unittest.TestCase):
         listed = self.request("tools/list")
         names = {item["name"] for item in listed["result"]["tools"]}
         self.assertIn("forge_get_capabilities", names)
-        self.assertIn("forge_evaluate_release", names)
+        self.assertNotIn("forge_evaluate_release", names)
+        self.assertNotIn("forge_ingest_release_evidence", names)
+        self.assertNotIn("forge_bind_simulation_result", names)
         self.assertNotIn("forge_control_device", names)
 
     def test_tool_call_returns_structured_content(self) -> None:

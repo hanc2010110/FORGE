@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
+from forge_core.access_control import AuthorizationDeniedError
 from forge_core.change_management import (
     ArtifactDomain,
     EvidenceTier,
@@ -17,7 +18,12 @@ from forge_core.change_management import (
     ReleaseStatus,
     SourceSystem,
 )
-from forge_core.change_planning import AssetInputKind, PlannedChangeAction
+from forge_core.change_planning import (
+    AssetInputKind,
+    PlannedChangeAction,
+    PlanVerification,
+    plan_verification_hash,
+)
 from forge_core.connectors import (
     ConnectorCaptureRequest,
     ConnectorRegistry,
@@ -26,9 +32,11 @@ from forge_core.connectors import (
     adapter_manifest_hash,
 )
 from forge_core.constraints import evaluate_cost
+from forge_core.conversational_design import DesignParameter
 from forge_core.external_evidence_planning import (
     verify_external_evidence_plan as verify_external_evidence_plan_contract,
 )
+from forge_core.hashing import canonical_sha256
 from forge_core.models import Verdict
 from forge_core.persistence import (
     IdempotencyConflictError,
@@ -36,14 +44,20 @@ from forge_core.persistence import (
     RecordNotFoundError,
     VersionConflictError,
 )
-from forge_core.planning_persistence import StoredExternalEvidencePlanVerification
+from forge_core.planning_persistence import (
+    StoredExternalEvidencePlanVerification,
+    StoredPlanVerification,
+)
 from forge_core.release_persistence import RawReleaseEvidence
 from forge_core.release_readiness import TestExecutionEvidence
 from forge_core.release_service import (
     AnalyzeChangeCommand,
+    ApproveDesignCandidateCommand,
     AssetInputDraft,
+    AutomaticReverificationApproval,
     CaptureSnapshotCommand,
     ComponentSpecificationDraft,
+    ConfirmDesignCandidateCommand,
     CreateChangePreviewCommand,
     CreateDesignProposalCommand,
     CreateExternalEvidencePlanCommand,
@@ -370,6 +384,284 @@ class ReleaseIntegrationServiceTests(unittest.TestCase):
         )
         self.assertTrue(replay.replayed)
         self.assertEqual(replay.response_json, released.response_json)
+        self.assertEqual(len(self.store.list_release_decisions("project-1")), 1)
+
+    def test_exact_user_approval_triggers_retry_safe_post_commit_reverification(
+        self,
+    ) -> None:
+        self.service.create_project(
+            CreateProjectCommand(project_id="project-1", name="Project One"),
+            context("create", None),
+        )
+        self.service.capture_snapshot(
+            "project-1",
+            capture_command("before", "snapshot-11", NOW - timedelta(hours=2)),
+            context("snapshot-before", 1),
+        )
+        self.service.capture_snapshot(
+            "project-1",
+            capture_command("after", "snapshot-12", NOW - timedelta(hours=1)),
+            context("snapshot-after", 2),
+        )
+        analyzed = self.service.analyze_change(
+            "project-1",
+            AnalyzeChangeCommand(
+                from_snapshot_id="snapshot-11", to_snapshot_id="snapshot-12"
+            ),
+            context("analyze", 3),
+        )
+        analysis_hash = analyzed.payload["change_assessment"]["analysis_hash"]
+        assessment = self.store.get_change_assessment(analysis_hash)
+        snapshot = self.store.get_connector_snapshot("project-1", "snapshot-12")
+        baseline = self.store.get_connector_snapshot("project-1", "snapshot-11")
+        baseline_source = next(
+            item
+            for item in baseline.snapshot.artifacts
+            if item.domain is ArtifactDomain.HARDWARE
+        )
+        previewed = self.service.create_change_preview(
+            "project-1",
+            change_preview_command(baseline_source),
+            context("auto-preview", 4),
+        )
+        proposed = self.service.create_design_proposal(
+            "project-1",
+            CreateDesignProposalCommand(
+                goal="Validate the approved controller revision",
+                priority=GoalPriority.RELIABILITY,
+                constraints="preserve interfaces",
+                preview_hash=previewed.payload["change_preview"]["preview_hash"],
+            ),
+            context("auto-proposal", 5),
+        )
+        candidate_parameters = (
+            DesignParameter(
+                name="controller revision",
+                current_value="11",
+                proposed_value="12",
+                source_refs=(baseline_source.content_hash,),
+            ),
+        )
+        candidate_nonce = "candidate-approval-nonce-value-00000001"
+        self.service.approve_design_candidate(
+            "project-1",
+            ApproveDesignCandidateCommand(
+                approval_id="candidate-approval-1",
+                approval_nonce=candidate_nonce,
+                candidate_id="approved-candidate",
+                revision=1,
+                proposal_hash=proposed.payload["design_proposal"]["proposal_hash"],
+                parameters=candidate_parameters,
+                requirements=("preserve the verified interface",),
+            ),
+            context("auto-approve", 6),
+        )
+        candidate_command = ConfirmDesignCandidateCommand(
+            approval_id="candidate-approval-1",
+            approval_nonce=candidate_nonce,
+            candidate_id="approved-candidate",
+            revision=1,
+            proposal_hash=proposed.payload["design_proposal"]["proposal_hash"],
+            parameters=candidate_parameters,
+            requirements=("preserve the verified interface",),
+            confirmed_by="local-operator",
+        )
+        with self.assertRaisesRegex(AuthorizationDeniedError, "nonce is invalid"):
+            self.service.confirm_design_candidate(
+                "project-1",
+                candidate_command.model_copy(
+                    update={"approval_nonce": "wrong-nonce-value-0000000000000000"}
+                ),
+                context("reject-wrong-nonce", 7),
+            )
+        with self.assertRaisesRegex(AuthorizationDeniedError, "authenticated actor"):
+            self.service.confirm_design_candidate(
+                "project-1",
+                candidate_command.model_copy(update={"confirmed_by": "llm-agent"}),
+                context("reject-forged-actor", 7),
+            )
+        confirmed = self.service.confirm_design_candidate(
+            "project-1",
+            candidate_command,
+            context("auto-confirm", 7),
+        )
+        receipt = self.store.get_design_candidate_approval_receipt(
+            "candidate-approval-1"
+        )
+        self.assertEqual(
+            receipt.candidate_hash,
+            confirmed.payload["design_candidate"]["candidate_hash"],
+        )
+        with self.assertRaisesRegex(AuthorizationDeniedError, "already been consumed"):
+            self.service.confirm_design_candidate(
+                "project-1",
+                candidate_command,
+                context("reject-approval-reuse", 8),
+            )
+        preview_hash = previewed.payload["change_preview"]["preview_hash"]
+        scenario_id = previewed.payload["change_preview"]["scenario_id"]
+        verification_hash = plan_verification_hash(
+            verification_id="verified-auto-plan",
+            project_id="project-1",
+            scenario_id=scenario_id,
+            preview_hash=preview_hash,
+            actual_change_analysis_hash=analysis_hash,
+            verified_at=NOW,
+            matches_plan=True,
+        )
+        verification = PlanVerification(
+            verification_id="verified-auto-plan",
+            project_id="project-1",
+            scenario_id=scenario_id,
+            preview_hash=preview_hash,
+            actual_change_analysis_hash=analysis_hash,
+            verified_at=NOW,
+            matches_plan=True,
+            verification_hash=verification_hash,
+        )
+        self.store.store_plan_verification(
+            StoredPlanVerification(
+                project_id="project-1",
+                verification_hash=verification_hash,
+                scenario_id=scenario_id,
+                preview_hash=preview_hash,
+                actual_change_analysis_hash=analysis_hash,
+                verification=verification,
+                stored_at=NOW,
+            ),
+            expected_project_version=8,
+        )
+        evidence: tuple[RawReleaseEvidence, ...] = (
+            cost_record(snapshot.snapshot),
+            build_evidence(assessment.assessment, snapshot.snapshot),
+            *required_test_evidence(assessment.assessment, snapshot.snapshot),
+        )
+        version = 9
+        for index, item in enumerate(evidence[:-1], start=1):
+            result = self.service.ingest_release_evidence(
+                "project-1",
+                IngestReleaseEvidenceCommand(
+                    analysis_hash=analysis_hash, evidence=item
+                ),
+                context(f"evidence-{index}", version),
+            )
+            version = result.project_version
+        final_evidence = evidence[-1]
+        candidate_hash = confirmed.payload["design_candidate"]["candidate_hash"]
+        command = IngestReleaseEvidenceCommand(
+            analysis_hash=analysis_hash,
+            evidence=final_evidence,
+            automatic_reverification=AutomaticReverificationApproval(
+                approval_id="auto-verify-1",
+                analysis_hash=analysis_hash,
+                candidate_hash=candidate_hash,
+                preview_hash=preview_hash,
+                plan_verification_hash=verification_hash,
+                evidence_hash=canonical_sha256(final_evidence),
+                approved_by="local-operator",
+                approved_at=NOW,
+            ),
+        )
+        original_version = version
+        approval = command.automatic_reverification
+        assert approval is not None
+        wrong_lineage = IngestReleaseEvidenceCommand(
+            analysis_hash=analysis_hash,
+            evidence=final_evidence,
+            automatic_reverification=approval.model_copy(
+                update={"preview_hash": "sha256:" + "f" * 64}
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "does not bind"):
+            self.service.ingest_release_evidence(
+                "project-1",
+                wrong_lineage,
+                context("wrong-lineage", version),
+            )
+        mismatched = IngestReleaseEvidenceCommand(
+            analysis_hash=analysis_hash,
+            evidence=final_evidence,
+            automatic_reverification=approval.model_copy(
+                update={"approved_by": "another-operator"}
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "actor does not match"):
+            self.service.ingest_release_evidence(
+                "project-1",
+                mismatched,
+                context("mismatched-approval", original_version),
+            )
+        self.assertEqual(self.store.get_project("project-1").version, original_version)
+        self.assertNotIn(
+            final_evidence.evidence_id,
+            {
+                item.evidence_id
+                for item in self.store.list_release_evidence("project-1")
+            },
+        )
+        with (
+            patch.object(
+                self.service,
+                "_process_automatic_reverification_trigger",
+                side_effect=RuntimeError("simulated process exit after durable ingest"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "simulated process exit"),
+        ):
+            self.service.ingest_release_evidence(
+                "project-1",
+                command,
+                context("evidence-final", original_version),
+            )
+        pending = self.store.list_pending_automatic_reverification_triggers("project-1")
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(
+            self.store.get_project("project-1").version, original_version + 1
+        )
+        with patch.object(
+            self.service,
+            "_process_automatic_reverification_trigger",
+            side_effect=RuntimeError("secret transport detail"),
+        ):
+            isolated = self.service.process_pending_automatic_reverifications(
+                "project-1"
+            )
+        self.assertEqual(isolated, ())
+        failures = self.store.list_automatic_reverification_failures("project-1")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0].error_code, "automatic_reverification_failed")
+        self.assertNotIn("secret transport detail", failures[0].model_dump_json())
+        degraded = self.service.operational_health()
+        self.assertEqual(degraded["status"], "DEGRADED")
+        self.assertEqual(degraded["pending_automatic_reverifications"], 1)
+        self.assertEqual(degraded["automatic_reverification_failures"], 1)
+        recovered = self.service.process_pending_automatic_reverifications("project-1")
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(
+            self.store.list_pending_automatic_reverification_triggers("project-1"),
+            (),
+        )
+        self.assertEqual(self.service.operational_health()["status"], "READY")
+        result = self.service.ingest_release_evidence(
+            "project-1",
+            command,
+            context("evidence-final", original_version),
+        )
+        replay = self.service.ingest_release_evidence(
+            "project-1",
+            command,
+            context("evidence-final", original_version),
+        )
+
+        automatic = result.payload["automatic_reverification"]
+        self.assertEqual(automatic["release_status"], "READY")
+        self.assertEqual(automatic["next_step"]["next_state"], "accepted")
+        self.assertEqual(
+            automatic["receipt_hash"],
+            recovered[0].payload["automatic_reverification_receipt"]["receipt_hash"],
+        )
+        self.assertEqual(result.project_version, original_version + 2)
+        self.assertTrue(replay.replayed)
+        self.assertEqual(replay.response_json, result.response_json)
         self.assertEqual(len(self.store.list_release_decisions("project-1")), 1)
 
     def test_plan_preview_and_verification_are_owned_and_replayable(self) -> None:

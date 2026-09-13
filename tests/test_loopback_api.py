@@ -233,7 +233,9 @@ class LoopbackAPITests(unittest.TestCase):
         report = response.json()["data"]
         self.assertEqual(report["status"], "READY")
         self.assertEqual(report["integrity_result"], "ok")
-        self.assertEqual(report["observed_schema_version"], 10)
+        self.assertEqual(report["observed_schema_version"], 13)
+        self.assertEqual(report["pending_automatic_reverifications"], 0)
+        self.assertEqual(report["automatic_reverification_failures"], 0)
         self.assertTrue(report["report_hash"].startswith("sha256:"))
 
     def test_local_rag_ingests_project_text_and_returns_cited_chat_result(self) -> None:
@@ -683,28 +685,53 @@ class LoopbackAPITests(unittest.TestCase):
             version=3,
         )
         proposal_hash = proposal.json()["design_proposal"]["proposal_hash"]
+        candidate_nonce = "candidate-approval-nonce-value-00000001"
+        candidate_payload = {
+            "session_id": "SESSION-014",
+            "candidate_id": "DC-014",
+            "revision": 1,
+            "proposal_hash": proposal_hash,
+            "parameters": [
+                {
+                    "name": "upper_arm_length",
+                    "current_value": "420 mm",
+                    "proposed_value": "520 mm",
+                    "source_refs": ["cad:upper-arm-rev4"],
+                }
+            ],
+            "requirements": ["mass increase <= 5%"],
+        }
+        approval = self.post(
+            "/api/v1/projects/project-1/design-candidate-approvals",
+            {
+                "approval_id": "candidate-approval-1",
+                "approval_nonce": candidate_nonce,
+                **candidate_payload,
+            },
+            key="approve-candidate",
+            version=4,
+        )
+        self.assertEqual(approval.status, 201, approval.json())
+        self.assertEqual(
+            approval.json()["design_candidate_approval"]["nonce_hash"],
+            "<redacted>",
+        )
         candidate = self.post(
             "/api/v1/projects/project-1/design-candidates",
             {
-                "session_id": "SESSION-014",
-                "candidate_id": "DC-014",
-                "revision": 1,
-                "proposal_hash": proposal_hash,
-                "parameters": [
-                    {
-                        "name": "upper_arm_length",
-                        "current_value": "420 mm",
-                        "proposed_value": "520 mm",
-                        "source_refs": ["cad:upper-arm-rev4"],
-                    }
-                ],
-                "requirements": ["mass increase <= 5%"],
-                "confirmed_by": "engineer-1",
+                "approval_id": "candidate-approval-1",
+                "approval_nonce": candidate_nonce,
+                **candidate_payload,
+                "confirmed_by": "local-operator",
             },
             key="confirm-candidate",
-            version=4,
+            version=5,
         )
         self.assertEqual(candidate.status, 201, candidate.json())
+        self.assertEqual(
+            candidate.json()["approval_receipt"]["approval_id"],
+            "candidate-approval-1",
+        )
         candidate_hash = candidate.json()["design_candidate"]["candidate_hash"]
         first_transition = self.post(
             "/api/v1/projects/project-1/design-transitions",
@@ -715,7 +742,7 @@ class LoopbackAPITests(unittest.TestCase):
                 "to_state": "proposed",
             },
             key="transition-1",
-            version=5,
+            version=6,
         )
         self.assertEqual(first_transition.status, 201, first_transition.json())
         wrong_session = self.post(
@@ -735,7 +762,7 @@ class LoopbackAPITests(unittest.TestCase):
                 ],
             },
             key="reject-cross-session-simulation",
-            version=6,
+            version=7,
         )
         self.assertEqual(wrong_session.status, 422, wrong_session.json())
         simulation = self.post(
@@ -760,7 +787,7 @@ class LoopbackAPITests(unittest.TestCase):
                 ],
             },
             key="bind-simulation",
-            version=6,
+            version=7,
         )
         self.assertEqual(simulation.status, 201, simulation.json())
         simulation_hash = simulation.json()["simulation_binding"]["simulation_hash"]
@@ -769,7 +796,7 @@ class LoopbackAPITests(unittest.TestCase):
             (3, "selected", "confirmed", candidate_hash, None),
             (4, "confirmed", "simulated", candidate_hash, simulation_hash),
         )
-        version = 7
+        version = 8
         for (
             sequence,
             from_state,
